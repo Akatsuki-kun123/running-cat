@@ -1,0 +1,15 @@
+# The cat's art is Bow.Pixel's: its licence does not allow sharing it again.
+# Everyone makes it on their own machine from their own download (running-cat/tools/make_cat_frames.py).
+cat-frames.ts
+*.zip
+Cat-Sheet.png
+Cat 50+ Animations/
+
+# Written by the engine and the tools
+running-cat/.claude-plugin/types/
+art/preview.png
+*.png
+
+# Old copies
+*.before-*
+__pycache__/

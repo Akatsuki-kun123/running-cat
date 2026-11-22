@@ -1,0 +1,5 @@
+{
+  "name": "running-cat-mods",
+  "owner": { "name": "running-cat" },
+  "plugins": [{ "name": "running-cat", "source": "./running-cat" }]
+}
