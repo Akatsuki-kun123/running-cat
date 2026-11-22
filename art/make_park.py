@@ -1789,7 +1789,8 @@ export const PARK_BACK = {BACK!r}
 export const PARK_MID = {MID!r}
 export const PARK_FRONT = {FRONT!r}
 """
-open(out_ts, "w", encoding="utf-8").write(ts)
+open(out_ts, "w", encoding="utf-8", newline="
+").write(ts)   # LF on every machine
 total = len(STYLE) + len(defs) + len(BACK) + len(MID) + len(FRONT)
 print("defs", len(defs), "back", len(BACK), "mid", len(MID), "front", len(FRONT), "total", total)
 
