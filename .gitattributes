@@ -1,0 +1,3 @@
+# Keep LF on every machine: make_park.py writes park.ts with LF, so a fresh one compares byte for byte
+* text=auto eol=lf
+*.png binary
