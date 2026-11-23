@@ -292,6 +292,58 @@ def cyclist_clothes():
     return sorted({c for ch, c in CYCLIST["pal"].items() if ch in CLOTHES})
 
 
+# ---------- summer and autumn: the same templates for the warm and the cool ----------
+# Summer (SUMMER, swapped in for the templates of the same name): short sleeves for everyone, a
+# sleeve kept only at the shoulder (rows 7 and 8 of columns 2 and 8) and bare arms below it; coats
+# lose their long hem; office workers in "cool biz", a white shirt with no jacket (and no tie but the
+# student's), the gakuran student in a white summer shirt, and hoodies, bombers and cardigans off.
+SUMMER = {}
+for _name, _f in TEMPLATES.items():
+    _s = {xy: ("S" if c == "a" and not (xy[1] <= 8 and xy[0] in (2, 8)) else c) for xy, c in _f.items()}
+    if _s != _f:
+        SUMMER[_name] = _s
+for _step in COAT_HEM:
+    SUMMER[f"hem_{_step}"] = {}
+COOL_BIZ = {"suit": "JjYT", "lanyard": "JjY", "gakuran": "JjYK", "blazer": "JjY"}
+for _k, _letters in COOL_BIZ.items():
+    _f = SUMMER.get(f"body_{_k}", TEMPLATES[f"body_{_k}"])
+    SUMMER[f"body_{_k}"] = {xy: ("W" if c in _letters else c) for xy, c in _f.items()}
+# and hoodies, bombers and cardigans off: a T-shirt in the jacket's own colour (the zip, collar,
+# drawstrings, pocket and the shirt under it all that colour; no hood; a bare neck)
+TEE_ON = {"body_hoodie": "WjZK", "fbody_hoodie": "WjZK", "body_bomber": "WjZK", "fbody_bomber": "WjZK",
+          "bbody_bomber": "WjZK", "sbody_bomber": "WjZK", "body_cardigan": "W"}
+for _name, _letters in TEE_ON.items():
+    _f = SUMMER.get(_name, TEMPLATES[_name])
+    _t = {}
+    for xy, c in _f.items():
+        if xy[1] == 6 and c in "jK":              # the hood goes, the collar shows the neck
+            if c == "K":
+                _t[xy] = "S"
+            continue
+        _t[xy] = "J" if c in _letters else c
+    SUMMER[_name] = _t
+
+# Autumn (AUTUMN): a thin scarf at the neck (w, and v just either side), in place of the bare neck;
+# the style gives every other person a scarf colour, and the rest their skin again (and nothing at
+# v), and long sleeves to everyone.
+AUTUMN = {}
+for _name, _f in TEMPLATES.items():
+    if _name.startswith(("body_", "fbody_", "bbody_")) and any(xy[1] == 6 and c == "S" for xy, c in _f.items()):
+        _a = {xy: ("w" if xy[1] == 6 and c == "S" else c) for xy, c in _f.items()}
+        for _x in (3, 7):                      # the scarf a little wider than the neck (v: or nothing)
+            _a.setdefault((_x, 6), "v")
+        AUTUMN[_name] = _a
+AUTUMN_SCARVES = ["#c87a20", "#8a2a3a", "#b0522d", "#6a7a3a", "#e6d2a8", "#6a4030", "#c83a3a", "#d0a040"]
+
+
+def autumn_colours(p, k):
+    """--w2 (the thin scarf) for person p, the k-th drawn: every other person wears one."""
+    if k % 2:
+        return ""
+    jacket = p["pal"].get("J", "")
+    return "--w2:" + next(s for n in range(8) if (s := AUTUMN_SCARVES[(k * 3 + n) % 8]) != jacket)
+
+
 # ---------- people ----------
 SKIN =["#f2c9a0", "#d9a07a", "#b97a56"]
 

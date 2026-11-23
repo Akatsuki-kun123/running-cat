@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import { CAT_FRAMES, CAT_H } from './cat-frames'
-import { CAT_X, CAT_Y, DAY, HORIZON, LAYERS, PARK_BACK, PARK_DEFS, PARK_FRONT, PARK_H, PARK_MID, PARK_STYLE, PARK_TOP, PARK_W, PARK_WINTER_DEFS, PARK_WINTER_PAINT, PARK_WINTER_STYLE, TRAIN_PERIOD, VISIT_COPIES, VISITORS, WALK_LOOP, WALK_PAD, WALKERS } from './park'
+import { CAT_X, CAT_Y, DAY, HORIZON, LAYERS, PARK_BACK, PARK_DEFS, PARK_FRONT, PARK_H, PARK_MID, PARK_STYLE, PARK_TOP, PARK_W, PARK_AUTUMN_DEFS, PARK_AUTUMN_STYLE, PARK_SUMMER_DEFS, PARK_SUMMER_STYLE, PARK_WINTER_DEFS, PARK_WINTER_PAINT, PARK_WINTER_STYLE, TRAIN_PERIOD, VISIT_COPIES, VISITORS, WALK_LOOP, WALK_PAD, WALKERS } from './park'
 import { makePark, visitOffset } from './cast'
 import type { Park } from './cast'
 import { SEASONS, WEATHERS, isWet, seasonAt, seasonEnd, seasonHour, snowDepth, weatherAt, weatherChanges } from './season'
@@ -731,8 +731,11 @@ const STILL_CSS = '@media (prefers-reduced-motion: reduce){.sfa,.sfb,.sfc,.bza,.
 // How far ahead a drawing plans the weather; past it the last weather holds till the next redraw.
 const WX_WINDOW = 600
 
-// Winter's templates, by id: everyone dressed for the cold, swapped in for their own.
-const WINTER_DEFS = new Map([...classed(PARK_WINTER_DEFS).matchAll(/<g id="(\w+)">(.*?)<\/g>/g)].map(m => [m[1]!, m[0]] as const))
+// Each season's templates but spring's, by id, swapped in for their own: short sleeves in summer,
+// long sleeves and thin scarves in autumn, everyone dressed for the cold in winter.
+const dressed = (markup: string): Map<string, string> => new Map([...classed(markup).matchAll(/<g id="(\w+)">(.*?)<\/g>/g)].map(m => [m[1]!, m[0]] as const))
+const DRESS = new Map<string, Map<string, string>>([['summer', dressed(PARK_SUMMER_DEFS)], ['autumn', dressed(PARK_AUTUMN_DEFS)], ['winter', dressed(PARK_WINTER_DEFS)]])
+const DRESS_STYLE: Record<string, string> = { summer: PARK_SUMMER_STYLE, autumn: PARK_AUTUMN_STYLE }
 const TEMPLATE = /<g id="(\w+)">(?:<path[^>]*\/>)*<\/g>/g
 
 type Art = { back: string; front: string; defs: (defs: string) => string }
@@ -780,11 +783,13 @@ function lookAt(t: number) {
       if (!look.petals) out = out.replace(/<g id="pet">.*?<\/g>/, '')
       if (!look.fireflies) out = cutGroups(out, '<g id="ffl">')
       if (!look.rain) out = out.replace(/<pattern id="(?:rf|rn|spl)".*?<\/pattern>/g, '')
-      // the bare tree, the snow lying and the beds and fountain asleep only in winter; and then
-      // everyone in their winter things
+      // everyone dressed for the season
+      const dress = DRESS.get(look.season)
+      if (dress !== undefined) out = out.replace(TEMPLATE, (whole, id: string) => dress.get(id) ?? whole)
+      // the bare tree, the snow lying and the beds and fountain asleep only in winter
       // (the crown, the flowers and the fountain's jet, hidden in winter, not drawn at all)
       out = look.winter
-        ? out.replace(TEMPLATE, (whole, id: string) => WINTER_DEFS.get(id) ?? whole).replace(CROWN_PATHS, '').replace(/<g class="(?:flw|fjet|fw[012])">.*?<\/g>/g, '')
+        ? out.replace(CROWN_PATHS, '').replace(/<g class="(?:flw|fjet|fw[012])">.*?<\/g>/g, '')
         : out.replace(/<g class="(?:wtr|sg1|sg2)">.*?<\/g>/g, '')
       return extra === '' ? out : out.replace(/<\/defs>$/, `${extra}</defs>`)
     }
@@ -927,10 +932,11 @@ const WINTER_PAINT = PARK_WINTER_PAINT.flatMap(([base, colour, within]) => paint
 
 function seasonStyle(t0: number): string {
   const colours = seasonColours(t0)
-  const winter = seasonAt(t0, sky) === 'winter'
+  const season = seasonAt(t0, sky)
+  const winter = season === 'winter'
   const paint = (k: number): string => (winter && k < CROWN ? 'none' : colours[k]!)
   return SEASON_BASE.map((base, k) => (paint(k) === base ? '' : REPAINT[k]!.map(f => f.replace('%', paint(k))).join(''))).join('') +
-    (winter ? PARK_WINTER_STYLE + WINTER_PAINT + snowStyle(t0) : '')
+    (winter ? PARK_WINTER_STYLE + WINTER_PAINT + snowStyle(t0) : DRESS_STYLE[season] ?? '')
 }
 
 // The snow lying on things, as deep as it is over the drawing's window: a dusting (sg1) shows

@@ -3,7 +3,7 @@ import type { TestBody } from 'claude-code/testing'
 
 import { CAT_FRAMES } from '../hooks/cat-frames'
 import { classed } from '../hooks/register'
-import { CAST, DAY, PARK_DEFS, PARK_WINTER_DEFS, TRAIN_PERIOD, VISITORS, WALKERS } from '../hooks/park'
+import { CAST, DAY, PARK_AUTUMN_DEFS, PARK_DEFS, PARK_SUMMER_DEFS, PARK_WINTER_DEFS, TRAIN_PERIOD, VISITORS, WALKERS } from '../hooks/park'
 import { SEASON, SEASON_START, SPELLS, YEAR, seasonAt, seasonHour, snowDepthAt, weatherAt } from '../hooks/season'
 
 const BAND = {
@@ -830,11 +830,37 @@ test('winter: the cherry tree stands bare under snow, and everyone wears a hat a
   expect(ids.length).toBeGreaterThan(20)
   expect(winter).toContain('class="cw2"')
   expect(winter).toContain('class="cn2"')
-  expect(autumn).not.toContain('class="cw2"')
+  expect(autumn).not.toContain('class="cn2"')
   expect(winter).toContain('.ca2{stroke:color-mix(in srgb,var(--j2,var(--J,var(--a2))) 80%,#000)}')
   expect(winter).toMatch(/\.w0\{--w2:#[0-9a-f]{6};--n2:#[0-9a-f]{6}\}/)
   expect(winter).toMatch(/\.pp0\{--w2:#[0-9a-f]{6};--n2:#[0-9a-f]{6}\}/)
   for (const id of ids) expect([id, (winter.match(new RegExp(`<g id="${id}">`, 'g')) ?? []).length]).toEqual([id, 1])
+})
+
+test('summer wears short sleeves and white shirts, autumn long sleeves and thin scarves, spring as drawn', async ($, on) => {
+  const [spring, summer, autumn] = await scenesAt($, on, [0, 1, 2].map(k => inSeason(k, 10)))
+  const defs = (markup: string): Map<string, string> => new Map([...classed(markup).matchAll(/<g id="(\w+)">(.*?)<\/g>/g)].map(m => [m[1]!, m[0]] as const))
+  const own = defs(PARK_DEFS)
+  for (const [name, season, dressed] of [['summer', summer, PARK_SUMMER_DEFS], ['autumn', autumn, PARK_AUTUMN_DEFS]] as const) {
+    const swaps = defs(dressed)
+    expect([name, swaps.size > 10]).toEqual([name, true])
+    // each dressed template in place of its own, under the same id, and spring keeps its own
+    for (const [id, art] of swaps) {
+      expect([name, id, season.includes(art), (season.match(new RegExp(`<g id="${id}">`, 'g')) ?? []).length]).toEqual([name, id, true, 1])
+      if (own.has(id)) expect([id, spring.includes(own.get(id)!)]).toEqual([id, true])
+    }
+  }
+  // summer: bare arms below the shoulder, no coat hems, the office's sleeves white
+  expect(PARK_SUMMER_DEFS).toMatch(/<g id="\w+"><\/g>/)
+  expect(summer).toContain('.cW{stroke:var(--W,#f3f0fb)}')
+  expect(summer).toMatch(/\.w\d+ use(,\.w\d+ use)*\{--a2:#f3f0fb\}/)
+  expect(spring).not.toContain('{--a2:#f3f0fb}')
+  // autumn: a scarf for every other person, the bare neck for the rest; long sleeves
+  expect(autumn).toContain('.cw2{stroke:var(--w2,var(--S))}')
+  expect(autumn).toContain('.ca2{stroke:var(--j2,var(--J,var(--a2)))}')
+  expect(autumn).toMatch(/\.w0\{--w2:#[0-9a-f]{6}\}/)
+  expect(autumn).not.toMatch(/\.w1\{--w2:/)
+  for (const other of [spring, summer]) expect(other).not.toContain('class="cw2"')
 })
 
 test('the colours turn to the next season\'s over its last two hours', async ($, on) => {
