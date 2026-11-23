@@ -33,6 +33,27 @@ export const seasonHour = (t: number): number => (wrap(t - SEASON_START, SEASON)
 // When the season under way at `t` ends.
 export const seasonEnd = (t: number): number => t - wrap(t - SEASON_START, SEASON) + SEASON
 
+// The sun's day at `t`: sunrise and sunset in hours of the clock. Days are longest at midsummer
+// (14.4 hours, up before 5 and down near 7), shortest at midwinter (9.6 hours, up near 7 and
+// down soon after 4:30) and twelve hours half way through spring and autumn, noon always at
+// 11:45, the year turning smoothly through the seasons (a forced season as at the same point in it).
+export const NOON = 11.75
+export function sunHours(t: number, sky: Sky = {}): readonly [number, number] {
+  const k = sky.season ? SEASONS.indexOf(sky.season) : seasonIndexAt(t)
+  const year = (k + wrap(t - SEASON_START, SEASON) / SEASON) / 4
+  const length = 12 + 2.4 * Math.cos(2 * Math.PI * (year - 0.375))
+  return [NOON - length / 2, NOON + length / 2]
+}
+
+// The hour of the clock that an hour of the art's own day (sun up at 6, down at 18) comes at,
+// for the sun up at `rise` and down at `set`: the day and each half of the night stretched or
+// squeezed to fit, midnight kept.
+export function solarHour(h: number, rise: number, set: number): number {
+  if (h <= 6) return (h / 6) * rise
+  if (h <= 18) return rise + ((h - 6) / 12) * (set - rise)
+  return set + ((h - 18) / 6) * (24 - set)
+}
+
 // Each season's spells of weather, (from, to, what) in hours into the season; clear between them.
 // (Hour 0 is 4 a.m. on its first day: hour 11 is 3 p.m.)
 export const SPELLS: Readonly<Record<Season, readonly (readonly [number, number, Weather])[]>> = {

@@ -5,7 +5,7 @@ import { CAT_FRAMES, CAT_H } from './cat-frames'
 import { CAT_X, CAT_Y, DAY, HORIZON, LAYERS, PARK_BACK, PARK_DEFS, PARK_FRONT, PARK_H, PARK_MID, PARK_STYLE, PARK_TOP, PARK_W, PARK_AUTUMN_DEFS, PARK_AUTUMN_STYLE, PARK_SUMMER_DEFS, PARK_SUMMER_STYLE, PARK_WINTER_DEFS, PARK_WINTER_PAINT, PARK_WINTER_STYLE, TRAIN_PERIOD, VISIT_COPIES, VISITORS, WALK_LOOP, WALK_PAD, WALKERS } from './park'
 import { makePark, visitOffset } from './cast'
 import type { Park } from './cast'
-import { SEASONS, WEATHERS, isWet, seasonAt, seasonEnd, seasonHour, snowDepth, weatherAt, weatherChanges } from './season'
+import { SEASONS, WEATHERS, isWet, seasonAt, seasonEnd, seasonHour, snowDepth, solarHour, sunHours, weatherAt, weatherChanges } from './season'
 import type { Season, Sky, Weather } from './season'
 
 // Each art pixel is drawn this many CSS pixels tall.
@@ -695,6 +695,25 @@ const BASE_STYLE = PARK_STYLE
   .replace(/\.rain\{opacity:0;animation-name:rain\}@keyframes rain\{.*?\}\}/, '')
   .replace(/\.rcl\{opacity:0;animation-name:rcl\}@keyframes rcl\{.*?\}\}/, '')
 
+// What follows the sun rather than the clock: the sky, dawn and dusk, the daylight, the sun and
+// the moon, the lamps and the fireflies. The art keys them to a day with the sun up at 6 and down
+// at 18; each drawing moves their marks to the day's own sunrise and sunset (sunHours). The clock,
+// people's hours, the train and the windows keep to the clock.
+const SOLAR = /@keyframes (?:moon|sun|dsky|dusk|dlt|nl|ffy)\{(?:[\d.]+%\{[^}]*\})*\}/g
+const SUN_STYLES = new Map<string, string>()
+function sunStyle(t0: number): string {
+  const [rise, set] = sunHours(t0, sky).map(h => Math.round(h * 20) / 20) as [number, number]
+  const key = `${rise},${set}`
+  let style = SUN_STYLES.get(key)
+  if (style === undefined) {
+    style = BASE_STYLE.replace(SOLAR, frames =>
+      frames.replace(/([\d.]+)%\{/g, (_, pct: string) => `${+((solarHour((Number(pct) / 100) * 24, rise, set) / 24) * 100).toFixed(3)}%{`))
+    if (SUN_STYLES.size > 50) SUN_STYLES.clear()
+    SUN_STYLES.set(key, style)
+  }
+  return style
+}
+
 // The <g> opening with `open` cut out of the markup, as often as it comes.
 function cutGroups(markup: string, open: string): string {
   for (let i = markup.indexOf(open); i >= 0; i = markup.indexOf(open)) markup = markup.slice(0, i) + markup.slice(closeOf(markup, i))
@@ -986,7 +1005,7 @@ function scene(move: readonly Step[], moveMs: number, ranMs: number, go: Go, now
   const cat = catMove(move, moveMs)
   // (the style first: it plans who comes, and the defs draw only them)
   const look = lookAt(nowMs / 1000)
-  const style = shortCss(CORNER + (go === null ? '' : GLIDE) + BASE_STYLE + PAINT_CSS + CAT_STYLE + cat.css + layerStyle(ranMs, go) + peopleStyle(nowMs, ranMs, go))
+  const style = shortCss(CORNER + (go === null ? '' : GLIDE) + sunStyle(nowMs / 1000) + PAINT_CSS + CAT_STYLE + cat.css + layerStyle(ranMs, go) + peopleStyle(nowMs, ranMs, go))
 
   const draw = (shown: Map<number, Set<number>>): string =>
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -${PARK_TOP} ${PARK_W} ${PARK_H + PARK_TOP}" width="${PARK_W * SCALE}" height="${(PARK_H + PARK_TOP) * SCALE}" ` +

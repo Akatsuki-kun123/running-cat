@@ -4,7 +4,7 @@ import type { TestBody } from 'claude-code/testing'
 import { CAT_FRAMES } from '../hooks/cat-frames'
 import { classed } from '../hooks/register'
 import { CAST, DAY, PARK_AUTUMN_DEFS, PARK_DEFS, PARK_SUMMER_DEFS, PARK_WINTER_DEFS, TRAIN_PERIOD, VISITORS, WALKERS } from '../hooks/park'
-import { SEASON, SEASON_START, SPELLS, YEAR, seasonAt, seasonHour, snowDepthAt, weatherAt } from '../hooks/season'
+import { SEASON, SEASON_START, SPELLS, YEAR, seasonAt, seasonHour, snowDepthAt, solarHour, sunHours, weatherAt } from '../hooks/season'
 
 const BAND = {
   plugin: 'running-cat',
@@ -863,6 +863,60 @@ test('summer wears short sleeves and white shirts, autumn long sleeves and thin 
   for (const other of [spring, summer]) expect(other).not.toContain('class="cw2"')
 })
 
+test('the days are long in summer and short in winter, turning smoothly through the year', () => {
+  const at = (k: number, day: number): number => SEASON_START + k * SEASON + day * DAY
+  const length = (t: number): number => sunHours(t)[1] - sunHours(t)[0]
+  // longest at midsummer, shortest at midwinter, twelve hours half way through spring and autumn
+  expect(length(at(1, 2)).toFixed(1)).toBe('14.4')
+  expect(length(at(3, 2)).toFixed(1)).toBe('9.6')
+  expect(length(at(0, 2)).toFixed(1)).toBe('12.0')
+  expect(length(at(2, 2)).toFixed(1)).toBe('12.0')
+  // noon at 11:45 every day: summer up before 5 and down near 7, winter up near 7 and down at 4:30
+  for (const k of [0, 1, 2, 3]) expect(((sunHours(at(k, 1))[0] + sunHours(at(k, 1))[1]) / 2).toFixed(2)).toBe('11.75')
+  expect(sunHours(at(1, 2))[0]).toBeLessThan(5)
+  expect(sunHours(at(1, 2))[1]).toBeGreaterThan(18.9)
+  expect(sunHours(at(3, 2))[0]).toBeGreaterThan(6.9)
+  expect(sunHours(at(3, 2))[1]).toBeLessThan(16.6)
+  // no jump from one season into the next, nor from one minute to the next
+  for (const k of [1, 2, 3, 4]) expect(Math.abs(length(at(k, 0) - 1) - length(at(k, 0) + 1))).toBeLessThan(0.001)
+  // a forced season has the days of that season at the same point in it
+  expect(sunHours(at(0, 2), { season: 'winter' })).toEqual(sunHours(at(3, 2)))
+  // the art's day (sun up at 6, down at 18) moved to fit: midnight kept, the ends on the sun's
+  expect(solarHour(0, 4.5, 19)).toBe(0)
+  expect(solarHour(6, 4.5, 19)).toBe(4.5)
+  expect(solarHour(12, 4.5, 19)).toBe(11.75)
+  expect(solarHour(18, 4.5, 19)).toBe(19)
+  expect(solarHour(24, 4.5, 19)).toBe(24)
+})
+
+test('the sky, the sun and moon, the lamps and the fireflies keep the sun\'s hours; the clock keeps the clock\'s', async ($, on) => {
+  const [summer, winter] = await scenesAt($, on, [inSeason(1, 30), inSeason(3, 30)])
+  const marks = (svg: string, name: string): number[] =>
+    [...(svg.match(new RegExp(`@keyframes ${name}\\{((?:[\\d.]+%\\{[^}]*\\})*)\\}`))?.[1] ?? '').matchAll(/([\d.]+)%\{/g)].map(m => Number(m[1]))
+  const hour = (pct: number): number => (pct / 100) * 24
+  // the sun comes up (its first mark in sight) at the day's sunrise, and goes down at sunset
+  for (const [svg, t] of [[summer, inSeason(1, 30)], [winter, inSeason(3, 30)]] as const) {
+    const [rise, set] = sunHours(t / 1000)
+    const sun = marks(svg, 'sun')
+    expect(Math.abs(hour(sun[2]!) - rise)).toBeLessThan(0.06)
+    expect(Math.abs(hour(sun[sun.length - 3]!) - set)).toBeLessThan(0.06)
+  }
+  // the lamps go off later on a winter morning, and come on earlier in a winter evening
+  const [, sOff, sOn] = marks(summer, 'nl')
+  const [, wOff, wOn] = marks(winter, 'nl')
+  expect(wOff!).toBeGreaterThan(sOff! + 5)
+  expect(wOn!).toBeLessThan(sOn! - 5)
+  // the full day sky comes earlier and stays later in summer
+  expect(marks(summer, 'dsky')[2]!).toBeLessThan(marks(winter, 'dsky')[2]!)
+  expect(marks(summer, 'dsky')[3]!).toBeGreaterThan(marks(winter, 'dsky')[3]!)
+  // the clock, the windows and the train as drawn
+  for (const svg of [summer, winter]) {
+    expect(svg).toContain('@keyframes hrs{0%{transform:translateY(0)}')
+    expect(marks(svg, 'lw0')).toEqual(marks(summer, 'lw0'))
+    expect(marks(svg, 'ntr')).toEqual([0, 25, 100])
+  }
+})
+
 test('the colours turn to the next season\'s over its last two hours', async ($, on) => {
   // an hour before summer: half way from spring's pink to summer's green
   const [early, half] = await scenesAt($, on, [inSeason(1, -3), inSeason(1, -1)])
@@ -932,7 +986,8 @@ test('summer nights: fireflies over the hedge and the beds, out at night and not
   expect(summer).toMatch(/<g id="ffl">(<use class="ff fp[0-3]" href="#fg" x="\d+" y="\d+"\/>){16}<\/g>/)
   expect(summer).toMatch(/\.fp0\{animation-duration:[\d.]+s,[\d.]+s;--d:-[\d.]+s\}/)
   // on the day's clock: none by day, they come out from half past seven, gone by two
-  expect(summer).toMatch(/@keyframes ffy\{0%\{opacity:1\}.*?8\.333%\{opacity:0\}81\.25%\{opacity:0\}87\.5%\{opacity:1\}/)
+  // (out from after sunset into the small hours: summer's late sunset moves them later)
+  expect(summer).toMatch(/@keyframes ffy\{0%\{opacity:1\}[\d.]+%\{opacity:\.6\}[\d.]+%\{opacity:0\}8[2-5][\d.]*%\{opacity:0\}(?:8[7-9]|9\d)[\d.]*%\{opacity:1\}100%\{opacity:1\}\}/)
   // blinking and drifting on the wall clock, so a redraw carries them on
   expect(summer).toMatch(/,\.ff,\.fp0,\.fp1,\.fp2,\.fp3\{animation-delay:calc\(var\(--d,0s\) - var\(--t,0s\)\)\}/)
   expect(startsAt(summer, 'ffr')).toBe('1')
