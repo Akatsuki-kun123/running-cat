@@ -2,10 +2,10 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import { CAT_FRAMES, CAT_H } from './cat-frames'
-import { CAT_X, CAT_Y, DAY, HORIZON, LAYERS, PARK_BACK, PARK_DEFS, PARK_FRONT, PARK_H, PARK_MID, PARK_STYLE, PARK_TOP, PARK_W, PARK_WINTER_DEFS, PARK_WINTER_STYLE, TRAIN_PERIOD, VISIT_COPIES, VISITORS, WALK_LOOP, WALK_PAD, WALKERS } from './park'
+import { CAT_X, CAT_Y, DAY, HORIZON, LAYERS, PARK_BACK, PARK_DEFS, PARK_FRONT, PARK_H, PARK_MID, PARK_STYLE, PARK_TOP, PARK_W, PARK_WINTER_DEFS, PARK_WINTER_PAINT, PARK_WINTER_STYLE, TRAIN_PERIOD, VISIT_COPIES, VISITORS, WALK_LOOP, WALK_PAD, WALKERS } from './park'
 import { makePark, visitOffset } from './cast'
 import type { Park } from './cast'
-import { SEASONS, WEATHERS, isWet, seasonAt, seasonEnd, seasonHour, weatherAt, weatherChanges } from './season'
+import { SEASONS, WEATHERS, isWet, seasonAt, seasonEnd, seasonHour, snowDepth, weatherAt, weatherChanges } from './season'
 import type { Season, Sky, Weather } from './season'
 
 // Each art pixel is drawn this many CSS pixels tall.
@@ -330,8 +330,9 @@ function layerStyle(ranMs: number, go: Go): string {
     // Held on a half art pixel, a whole screen pixel, so a still park is sharp.
     const held = Math.round(at * 2) / 2
 
+    // Still, on a whole art pixel: drawn sharp (no GLIDE), nothing in it falls between pixels.
     if (go === null) {
-      return `.${cls}{transform:translateX(-${held}px)}`
+      return `.${cls}{transform:translateX(-${Math.round(at) % tile}px)}`
     }
     if (go > 0) {
       // Held till the cat sets off, then on from there: the drawing starts the park itself, so
@@ -719,13 +720,13 @@ const SNOW_FRONT =
   '<g class="snw"><g class="sfb"><rect class="sw" x="-8" y="-88" width="1030" height="132" fill="url(#sf)"/></g>' +
   '<g class="sfa"><rect class="sw" x="-8" y="-88" width="1030" height="132" fill="url(#sn)"/></g></g>'
 const BLIZZARD_FRONT =
-  '<g class="bzw"><rect y="-12" width="960" height="56" fill="#cdd5e4" opacity=".22"/>' +
+  '<g class="hvy"><g class="sfc"><rect class="sw" x="-38" y="-88" width="1030" height="132" fill="url(#sn)"/></g></g><g class="bzw"><rect y="-12" width="960" height="56" fill="#cdd5e4" opacity=".22"/>' +
   '<g class="bza"><rect y="-88" width="1020" height="132" fill="url(#sn)"/></g><g class="bzb"><rect y="-88" width="1008" height="132" fill="url(#sf)"/></g></g>'
 const LEAF_FRONT = '<g class="lfa"><rect y="-88" width="1120" height="132" fill="url(#lf)"/></g>'
 const SNOW_CSS = '@keyframes sfa{to{transform:translateY(44px)}}@keyframes sw{to{transform:translateX(4px)}}.sw{animation:sw 3s ease-in-out infinite alternate}.sfb{opacity:.6}'
 const BLIZZARD_CSS = '@keyframes bza{to{transform:translate(-60px,44px)}}@keyframes bzb{to{transform:translate(-48px,44px)}}'
 const LEAF_CSS = '@keyframes lfa{to{transform:translate(-160px,44px)}}'
-const STILL_CSS = '@media (prefers-reduced-motion: reduce){.sfa,.sfb,.bza,.bzb,.lfa,.sw{animation:none}}'
+const STILL_CSS = '@media (prefers-reduced-motion: reduce){.sfa,.sfb,.sfc,.bza,.bzb,.lfa,.sw{animation:none}}'
 
 // How far ahead a drawing plans the weather; past it the last weather holds till the next redraw.
 const WX_WINDOW = 600
@@ -750,7 +751,7 @@ function lookAt(t: number) {
     leaves: season === 'autumn',
     rain: seen.has('rain'),
     snow: seen.has('snow') || seen.has('blizzard'),
-    blizzard: seen.has('blizzard'),
+    blizzard: seen.has('blizzard') || blizzardAt(t, HEAVY) > 0,
   }
   const key = JSON.stringify(look)
   let art = ARTS.get(key)
@@ -776,8 +777,12 @@ function lookAt(t: number) {
       let out = markup
       if (!look.petals) out = out.replace(/<g id="pet">.*?<\/g>/, '')
       if (!look.rain) out = out.replace(/<pattern id="(?:rf|rn|spl)".*?<\/pattern>/g, '')
-      // the bare tree only in winter; and then everyone in their winter things
-      out = look.winter ? out.replace(TEMPLATE, (whole, id: string) => WINTER_DEFS.get(id) ?? whole) : out.replace(/<g class="wtr">.*?<\/g>/, '')
+      // the bare tree, the snow lying and the beds and fountain asleep only in winter; and then
+      // everyone in their winter things
+      // (the crown, the flowers and the fountain's jet, hidden in winter, not drawn at all)
+      out = look.winter
+        ? out.replace(TEMPLATE, (whole, id: string) => WINTER_DEFS.get(id) ?? whole).replace(CROWN_PATHS, '').replace(/<g class="(?:flw|fjet|fw[012])">.*?<\/g>/g, '')
+        : out.replace(/<g class="(?:wtr|sg1|sg2)">.*?<\/g>/g, '')
       return extra === '' ? out : out.replace(/<\/defs>$/, `${extra}</defs>`)
     }
     art = { back, front, defs }
@@ -788,15 +793,15 @@ function lookAt(t: number) {
 
 // A layer's opacity as the weather goes, over WX_WINDOW from `t0`: `of` the level for each
 // weather, fading `ramp` seconds from each change.
-function level(cls: string, t0: number, of: (w: Weather) => number, ramp: number): string {
+function level(cls: string, t0: number, of: (w: Weather) => number, ramp: number, plus = (_: number): number => 0, more: readonly number[] = []): string {
   const at = (t: number): number => {
     const now = of(weatherAt(t, sky))
     const c = weatherChanges(t - ramp, t + 0.001, sky).filter(x => x <= t && x > t - ramp).pop()
-    if (c === undefined) return now
+    if (c === undefined) return now + plus(t)
     const was = of(weatherAt(c - 0.01, sky))
-    return was + (now - was) * ((t - c) / ramp)
+    return was + (now - was) * ((t - c) / ramp) + plus(t)
   }
-  const marks = new Set([t0, t0 + WX_WINDOW])
+  const marks = new Set([t0, t0 + WX_WINDOW, ...more])
   for (const c of weatherChanges(t0 - ramp, t0 + WX_WINDOW, sky)) {
     for (const m of [c, c + ramp]) if (m > t0 && m < t0 + WX_WINDOW) marks.add(m)
   }
@@ -806,6 +811,41 @@ function level(cls: string, t0: number, of: (w: Weather) => number, ramp: number
   return `.${cls}{animation:${cls}x ${WX_WINDOW}s linear forwards}@keyframes ${cls}x{${frames}}`
 }
 
+// A blizzard builds up and dies down rather than coming and going at once: [how long before it
+// (and after) it starts to (and stops), how long into it (and before its end) it is at its
+// height]. Its own slanting snow and haze go with BLIZZARD; heavier ordinary snow with HEAVY,
+// longer, so the snow thickens before it and eases off after.
+const BLIZZARD = [40, 10] as const
+const HEAVY = [120, 30] as const
+
+// The blizzards' spells near `t`: [from, to] in seconds.
+function blizzards(t: number): [number, number][] {
+  const out: [number, number][] = []
+  const cs = weatherChanges(t - 300, t + 300, sky)
+  cs.forEach((c, k) => {
+    if (weatherAt(c + 0.01, sky) === 'blizzard') out.push([c, cs[k + 1] ?? c + 300])
+  })
+  if (weatherAt(t - 300, sky) === 'blizzard') out.unshift([t - 600, cs[0] ?? t + 300])
+  return out
+}
+
+// How strong a blizzard is at `t`, 0..1, by the given ramp.
+function blizzardAt(t: number, [early, full]: readonly [number, number]): number {
+  if (sky.weather) return sky.weather === 'blizzard' ? 1 : 0
+  const clamp = (x: number): number => Math.max(0, Math.min(1, x))
+  return Math.max(0, ...blizzards(t).map(([a, b]) => Math.min(clamp((t - a + early) / (early + full)), clamp((b + early - t) / (early + full)))))
+}
+
+// The times in the drawing's window where that strength turns: it is straight between them.
+function blizzardMarks(t0: number, [early, full]: readonly [number, number]): number[] {
+  return blizzards(t0 + WX_WINDOW / 2).flatMap(([a, b]) => [a - early, a + full, b - full, b + early]).filter(m => m > t0 && m < t0 + WX_WINDOW)
+}
+
+// A layer's opacity as strong as the blizzard, over the drawing's window.
+function ramp(cls: string, t0: number, r: readonly [number, number]): string {
+  return level(cls, t0, () => 0, 1, t => blizzardAt(t, r), blizzardMarks(t0, r))
+}
+
 // A loop on the wall clock, so a redraw carries it on.
 const loopOn = (cls: string, name: string, seconds: number, steps: number, t0: number): string =>
   `.${cls}{animation:${name} ${seconds}s steps(${steps}) -${wrap(t0, seconds).toFixed(2)}s infinite}`
@@ -813,14 +853,18 @@ const loopOn = (cls: string, name: string, seconds: number, steps: number, t0: n
 // The weather's layers for this drawing: the clouds' shade, rain, snow, a blizzard, autumn leaves.
 function weatherStyle(t0: number): string {
   const look = lookAt(t0)
-  const shade = { clear: 0, rain: 0.7, snow: 0.25, blizzard: 0.6 } as const
-  let css = level('rcl', t0, w => shade[w], 60)
+  const shade = { clear: 0, rain: 0.7, snow: 0.25, blizzard: 0.25 } as const
+  // (a blizzard's darker sky comes and goes with it, over the snow's)
+  let css = level('rcl', t0, w => shade[w], 60, t => 0.35 * blizzardAt(t, BLIZZARD), blizzardMarks(t0, BLIZZARD))
   if (look.rain) css += level('rain', t0, w => (w === 'rain' ? 1 : 0), 15)
   if (look.snow) {
     css += level('snw', t0, w => (w === 'snow' || w === 'blizzard' ? 1 : 0), 20) + SNOW_CSS +
       loopOn('sfa', 'sfa', 7, 44, t0) + loopOn('sfb', 'sfa', 11, 44, t0)
   }
-  if (look.blizzard) css += level('bzw', t0, w => (w === 'blizzard' ? 1 : 0), 30) + BLIZZARD_CSS + loopOn('bza', 'bza', 1.4, 44, t0) + loopOn('bzb', 'bzb', 2, 44, t0)
+  if (look.blizzard) {
+    css += ramp('bzw', t0, BLIZZARD) + ramp('hvy', t0, HEAVY) + BLIZZARD_CSS +
+      loopOn('bza', 'bza', 1.4, 44, t0) + loopOn('bzb', 'bzb', 2, 44, t0) + loopOn('sfc', 'sfa', 5, 44, t0)
+  }
   if (look.leaves) css += LEAF_CSS + loopOn('lfa', 'lfa', 9, 88, t0)
   if (look.snow || look.leaves) css += STILL_CSS
   return css
@@ -840,14 +884,19 @@ const TURN = DAY / 12
 
 // How each colour is painted in the art (a class, a stroke, a fill), with % for the new colour.
 const ART_ALL = [PARK_DEFS, PARK_BACK, PARK_MID, PARK_FRONT].join('')
-const REPAINT = SEASON_BASE.map(base =>
-  (['stroke="', 'style="fill:'] as const).flatMap(kind => {
+const REPAINT = SEASON_BASE.map(base => paintAs(base, '%'))
+
+// The rules that paint a colour of the art another: by its class where it has one, else by the
+// colour itself, `within` the given scope.
+function paintAs(base: string, colour: string, within = ''): string[] {
+  return (['stroke="', 'style="fill:'] as const).flatMap(kind => {
     const prop = kind === 'stroke="' ? 'stroke' : 'fill'
     const name = PAINT_CLASS.get(kind + base)
-    if (name !== undefined) return [`.${name}{${prop}:%}`]
+    if (name !== undefined) return [`${within}.${name}{${prop}:${colour}}`]
     if (!ART_ALL.includes(`<path ${kind}${base}"`)) return []
-    return [prop === 'stroke' ? `[stroke="${base}"]{stroke:%}` : `[style="fill:${base}"]{fill:%!important}`]
-  }))
+    return [prop === 'stroke' ? `${within}[stroke="${base}"]{stroke:${colour}}` : `${within}[style="fill:${base}"]{fill:${colour}!important}`]
+  })
+}
 
 const mixColour = (a: string, b: string, f: number): string =>
   `#${[1, 3, 5].map(i => Math.round(parseInt(a.slice(i, i + 2), 16) * (1 - f) + parseInt(b.slice(i, i + 2), 16) * f).toString(16).padStart(2, '0')).join('')}`
@@ -864,13 +913,38 @@ export function seasonColours(t0: number): readonly string[] {
 
 // The CROWN first colours are the cherry tree's crown: winter hides it, for the bare tree.
 const CROWN = 5
+// The crown's runs and blocks in the art: a winter drawing leaves them out.
+const CROWN_PATHS = new RegExp(`<path (?:${SEASON_BASE.slice(0, CROWN).flatMap(base =>
+  (['stroke="', 'style="fill:'] as const).map(kind => (PAINT_CLASS.has(kind + base) ? `class="${PAINT_CLASS.get(kind + base)}"` : `${kind}${base}"`))).join('|')}) d="[^"]*"/>`, 'g')
+// Winter's own colours: the beds' leaves dark bushes, the fountain's water ice, the cyclist's
+// clothes darker.
+const WINTER_PAINT = PARK_WINTER_PAINT.flatMap(([base, colour, within]) => paintAs(base, colour, within)).join('')
 
 function seasonStyle(t0: number): string {
   const colours = seasonColours(t0)
   const winter = seasonAt(t0, sky) === 'winter'
   const paint = (k: number): string => (winter && k < CROWN ? 'none' : colours[k]!)
   return SEASON_BASE.map((base, k) => (paint(k) === base ? '' : REPAINT[k]!.map(f => f.replace('%', paint(k))).join(''))).join('') +
-    (winter ? PARK_WINTER_STYLE : '')
+    (winter ? PARK_WINTER_STYLE + WINTER_PAINT + snowStyle(t0) : '')
+}
+
+// The snow lying on things, as deep as it is over the drawing's window: a dusting (sg1) shows
+// first, the full cover (sg2) once it is deep. Sampled every half park hour, the flat runs kept
+// to their ends.
+const SNOW_LAYERS = [
+  ['sg1', (d: number): number => Math.min(1, d * 2.5)],
+  ['sg2', (d: number): number => Math.max(0, Math.min(1, (d - 0.3) / 0.7))],
+] as const
+
+function snowStyle(t0: number): string {
+  return SNOW_LAYERS.map(([cls, of]) => {
+    const points: (readonly [number, number])[] = []
+    for (let s = 0; s <= WX_WINDOW; s += 30) points.push([s, Math.round(of(snowDepth(t0 + s, sky)) * 100) / 100])
+    if (points.every(([, v]) => v === points[0]![1])) return `.${cls}{opacity:${points[0]![1]}}`
+    const kept = points.filter(([, v], k) => k === 0 || k === points.length - 1 || v !== points[k - 1]![1] || v !== points[k + 1]![1])
+    const frames = kept.map(([s, v]) => `${((s / WX_WINDOW) * 100).toFixed(2)}%{opacity:${v}}`).join('')
+    return `.${cls}{animation:${cls}x ${WX_WINDOW}s linear forwards}@keyframes ${cls}x{${frames}}`
+  }).join('')
 }
 
 // The band's corners, rounded like the frame around it, in CSS pixels as drawn (not art pixels),
@@ -878,6 +952,8 @@ function seasonStyle(t0: number): string {
 const CORNER = 'svg{clip-path:inset(0 round 10px)}'
 // The park's tiles glide by in fractions of a pixel; the people and petals drawn over them go
 // the same way (not snapped pixel by pixel), so nobody judders against the path or the frame.
+// Only while it moves: smoothed, a person's pixels part a little where two colours meet, and
+// the scene behind shows through (an eye, say), so a still park is drawn sharp.
 const GLIDE = '.lp,.w{shape-rendering:geometricPrecision}'
 
 // The style block written short, to keep the band under the Svg size limit: `step-end` for the
@@ -899,7 +975,7 @@ function scene(move: readonly Step[], moveMs: number, ranMs: number, go: Go, now
   const cat = catMove(move, moveMs)
   // (the style first: it plans who comes, and the defs draw only them)
   const look = lookAt(nowMs / 1000)
-  const style = shortCss(CORNER + GLIDE + BASE_STYLE + PAINT_CSS + CAT_STYLE + cat.css + layerStyle(ranMs, go) + peopleStyle(nowMs, ranMs, go))
+  const style = shortCss(CORNER + (go === null ? '' : GLIDE) + BASE_STYLE + PAINT_CSS + CAT_STYLE + cat.css + layerStyle(ranMs, go) + peopleStyle(nowMs, ranMs, go))
 
   const draw = (shown: Map<number, Set<number>>): string =>
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -${PARK_TOP} ${PARK_W} ${PARK_H + PARK_TOP}" width="${PARK_W * SCALE}" height="${(PARK_H + PARK_TOP) * SCALE}" ` +

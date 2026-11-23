@@ -18,6 +18,7 @@ Layers, back to front:
 Each tile lives in a <pattern> and is painted on a rect wider than the scene by one tile, so a
 translate of 0..-P scrolls it with no seam. The TS side writes the translate (moving or held).
 """
+import json
 import math
 import random
 import re
@@ -163,7 +164,7 @@ def runs_d(runs):
 
 
 OPACITY = {"shd": 0.32, "fglow": 0.16, "wcglow": 0.22, "rail": 0.6, "tlit": 0.85, "tdeck": 0.9, "vglow": 0.1, "vpool": 0.12, "vlit": 0.35, "glow": 0.35, "lampglow": 0.24, "lampglow2": 0.11, "pool": 0.18, "pool2": 0.09, "lantern": 0.3}
-ORDER = ["tw0", "tw1", "tw2", "tlit", "tdeck", "beacon", "rail", "win", "shd", "lw0", "lw1", "lw2", "vglow", "vpool", "wcglow", "fglow", "talk0", "talk1", "talk2", "talk0r", "talk1r", "talk2r", "tumb", "glow", "neon", "neon2", "lampglow2", "lampglow", "pool2", "pool", "bulb", "fw0", "fw1", "fw2", "lantern", "vlit"]
+ORDER = ["tw0", "tw1", "tw2", "tlit", "tdeck", "beacon", "rail", "win", "shd", "flw", "fjet", "lw0", "lw1", "lw2", "vglow", "vpool", "wcglow", "fglow", "talk0", "talk1", "talk2", "talk0r", "talk1r", "talk2r", "tumb", "glow", "neon", "neon2", "lampglow2", "lampglow", "pool2", "pool", "bulb", "fw0", "fw1", "fw2", "lantern", "vlit"]
 GROUPED = ["lampglow2", "lampglow", "pool2", "pool", "bulb"]  # drawn per lamp, in this order
 
 
@@ -889,14 +890,17 @@ def flower_bed(bx, w):
             mid = 1 - abs((x - bx - (w + d) / 2) / ((w + d) / 2))
             y = 31 - round(2 * mid) + _brnd.randrange(0, 2)
             c = _brnd.choice(FLOWERS)
-            park.put(x, y, c)
+            park.anim("flw", x, y, 1, 1, c)
             if _brnd.random() < 0.35:
-                park.put(x, y + 2, c)
+                park.anim("flw", x, y + 2, 1, 1, c)
     shadow(bx + 1, bx + w + d + 3)
 
 
 FOUNTAIN_X = 520
 WATER, WATER_HI, STONE, STONE_HI, STONE_DK = "#36b8e3", "#c9f6ff", "#4a4f6e", "#6a7094", "#2e3150"
+
+
+RIMS = set()        # kerbs whose own top whitens under deep snow
 
 
 def fountain(fx):
@@ -912,6 +916,7 @@ def fountain(fx):
         back, front = round(cy - dy), round(cy + dy)
         park.put(fx + dx, back, STONE_HI)                       # the back of the rim
         park.rect(fx + dx, back + 1, 1, max(0, front - back - 1), WATER)
+        RIMS.add((fx + dx, front))
         park.put(fx + dx, front, STONE_HI if dx < rx // 3 else STONE)   # the front of the rim, its top
         park.rect(fx + dx, front + 1, 1, 40 - front, tone(dx))  # the wall down to the path
         if dx % 5 == 0 and abs(dx) < rx - 1:
@@ -945,7 +950,7 @@ def fountain(fx):
         last = y
     for i, (dx, y) in enumerate(flow):
         for side in ((1,) if dx == 0 else (-1, 1)):
-            park.put(fx + side * dx, y, WATER)
+            park.anim("fjet", fx + side * dx, y, 1, 1, WATER)
             park.anim(f"fw{i % 3}", fx + side * dx, y, 1, 1, WATER_HI)
     for k in range(3):                               # ripples where the arcs land, and around the column
         for dx in (-9, -4, 4, 9):
@@ -1036,6 +1041,39 @@ vending(444, 1)
 fountain(FOUNTAIN_X)
 lamp(560)
 toilet(WC_X)
+
+# ---------- winter: snow lying on things, the beds asleep, the fountain frozen ----------
+# Snow lies on every top with open sky two rows above it (so not between a bench's slats), not
+# on the path, the stairs' opening or the cherry tree (it has its own). Two layers: a dusting
+# (sg1: the caps drawn dashed), then the full cover (sg2: the same caps solid, piled a row higher
+# on wide tops, and the kerbs' own tops white), as it gets deep. The beds' leaves turn to dark
+# bushes and the fountain's water to ice by their colours (PARK_WINTER_PAINT); register.tsx cuts
+# the flowers and the jet out of a winter drawing.
+_crown = [x for (x, y), c in park.grid.items() if c in ("#b04080", "#d65c98", "#f07cb4", "#ff9cc8", "#ffb7d5", "#ffd6e8", "#fff4f9") and y < GROUND]
+_open = lambda x, y: park.grid.get((x % PARK_P, y)) is None
+SNOW_CAPS = set()
+for (x, y), c in park.grid.items():
+    if y > GROUND or y - 2 < -TOP or not (_open(x, y - 1) and _open(x, y - 2)):
+        continue
+    if min(_crown) <= x <= max(_crown) and y < GROUND - 3:
+        continue
+    if GATE_X + 3 <= x < GATE_X + GATE_W - 3 and y >= GROUND:
+        continue
+    SNOW_CAPS.add((x, y - 1))
+RIMS |= {xy for xy, c in park.grid.items() if c == RING_TOP or (c == BED_TOP and xy[1] == GROUND)}
+SNOW_DEEP = {xy: SNOW_ON for xy in RIMS}
+for x, y in SNOW_CAPS:                   # a row higher on wide tops, all but their ends
+    if all((x + k, y) in SNOW_CAPS for k in (-2, -1, 1, 2)):
+        SNOW_DEEP[(x, y - 1)] = SNOW_ON
+_snrd = random.Random(41)
+SNOW_DUST = {}
+for n in range(40):                      # a few specks blown onto the path's back edge
+    xy = (_snrd.randrange(PARK_P), _snrd.choice([GROUND + 2, GROUND + 2, GROUND + 3]))
+    (SNOW_DUST if n < 12 else SNOW_DEEP)[xy] = SNOW_ON
+_caps_svg = paths({xy: SNOW_ON for xy in SNOW_CAPS}).replace('" d="', '" id="scp" d="', 1)
+SNOW_SVG = (f'<g class="sg1">{_caps_svg}{paths(SNOW_DUST)}</g><g class="sg2"><use href="#scp"/>{paths(SNOW_DEEP)}</g>')
+WINTER_PAINT = [(LEAF, "#1c3a2c", ""), (LEAF_HI, "#2a5038", ""), (LEAF_DK, "#132a22", ""), (WATER, "#a8d4e8", "")]
+
 
 # ---------- people ----------
 # Rain gear: person(i, rain=True) adds an umbrella, these two their own, the rest one of UMBRELLAS.
@@ -1193,7 +1231,8 @@ for i, (kind, direction, speed, width) in enumerate((("dog", 1, 6.5, 24), ("bike
         a, b = PA.cyclist_pixels("a"), PA.cyclist_pixels("b")
         same = {k: c for k, c in a.items() if b.get(k) == c}
         steps = (small_paths(same) + f'<g class="pa">{small_paths({k: c for k, c in a.items() if k not in same})}</g>'
-                 f'<g class="pb">{small_paths({k: c for k, c in b.items() if k not in same})}</g>')
+                 f'<g class="pb">{small_paths({k: c for k, c in b.items() if k not in same})}</g>'
+                 f'<g class="wsc">{small_paths(PA.cyclist_scarf())}</g>')
         people_svg += walker_svg(i, direction, y, steps, width)
     walkers.append((i, direction, dur))
 
@@ -1362,6 +1401,9 @@ def side_sit(person):
     return uses(seat), seat
 
 
+FRONT_SIT_Y = 22   # sitting up straight on a bench's front edge, feet on the walk line (row 40)
+
+
 def front_sit(phone):
     def make(person):
         seat = PA.front_sit_parts(person, phone=phone)
@@ -1389,8 +1431,6 @@ TURN = 1.2                      # turned to a door before going in
 SINK = 2.0                      # going down the gate's stairs out of sight, or coming up them
 DEEP = 22                       # how far down: their head below the path's back edge
 BACK = 4                        # the stairs go down at the path's back edge, this far behind the walk
-EDGE = 19                       # walked along that edge till clear of the opening (the path in front
-                                # of it covers anyone over it)
 GAP = 1.5                       # nobody there at either end of a visit
 GATES = [GATE_AT + k * PARK_P for k in (-1, 0, 1, 2)]
 
@@ -1484,23 +1524,24 @@ def leg_css(sel, period, x, d, t1, t2, door=False):
     frames = f"{p(tu)}{{--o:1;--f:{tin}}}"
     frames += f"{p(t1)}{{--bk:1}}{p(t1 + TURN)}{{--o:0;--bk:0}}" if door else f"{p(t1)}{{--o:0;--s:1}}"
     frames += f"{p(t2)}{{--o:1;--f:{tout};--s:0}}{p(t3)}{{--bk:1}}{p(t4)}{{--o:0}}"
-    # up the stairs at the path's back edge, along it clear of the opening, out onto the path to the
-    # stop; and back the same way, turned to the gate at its edge, down the stairs
-    # Clear of it they step straight down onto the path's walk line, and on the way back they walk
-    # to that point and step straight up to the edge (never a slant: a long one took them across
-    # the feet of the benches and machines between, as if through them). The walk's time is shared
-    # out by the distance, the step down counted in.
-    e = min(EDGE, abs(d) - 1)
-    ex = d - e if d > 0 else d + e
+    # Up the stairs at the path's back edge, in the gate's opening, a step straight down onto the
+    # path's walk line and along it to the stop; back along it into the opening, a step straight up
+    # to the edge, turned to the gate, and down the stairs (never a slant, nor a walk along the
+    # edge). The group moves them along and up and down the step; its .vw goes up and down the
+    # stairs, cut off (clip gk, only while on them) just under their feet: so below the edge they
+    # are out of sight, and on the path in the opening all of them shows. The walk's time is
+    # shared out by the distance, the step counted in.
     k = (t1 - t0) / (abs(d) + BACK)
-    te, ts = e * k, BACK * k
-    down = f"{p(t0 + te + ts)}{{translate:{ex}px 0}}"
-    up = f"{p(t3 - te - ts)}{{translate:{ex}px 0}}"
-    return (f"{sel}{{animation:m{n} {period}s linear var(--vd) infinite,w{n} {period}s steps(1,end) var(--vd) infinite}}"
-            f"@keyframes m{n}{{0%,{p(tu)}{{translate:{d}px {DEEP}px}}{p(t0)}{{translate:{d}px -{BACK}px}}"
-            f"{p(t0 + te)}{{translate:{ex}px -{BACK}px}}{down}{p(t1)},{p(t2)}{{translate:0}}"
-            f"{up}{p(t3 - te)}{{translate:{ex}px -{BACK}px}}{p(t3)}{{translate:{d}px -{BACK}px}}"
-            f"{p(t4)},100%{{translate:{d}px {DEEP}px}}}}@keyframes w{n}{{{frames}}}")
+    ts = BACK * k
+    frames = frames.replace(f"{p(tu)}{{--o:1;", f"{p(tu)}{{--k:url(#gk);--o:1;", 1)
+    frames = frames.replace(f"{p(t1)}{{", f"{p(t0)}{{--k:none}}{p(t1)}{{", 1)
+    frames = frames.replace(f"{p(t3)}{{--bk:1}}", f"{p(t3)}{{--bk:1;--k:url(#gk)}}", 1)
+    return (f"{sel}{{animation:m{n} {period}s linear var(--vd) infinite,w{n} {period}s steps(1,end) var(--vd) infinite;clip-path:var(--k,none)}}"
+            f"{sel} .vw{{animation:s{n} {period}s linear var(--vd) infinite}}"
+            f"@keyframes m{n}{{0%,{p(t0)}{{translate:{d}px -{BACK}px}}{p(t0 + ts)}{{translate:{d}px 0}}{p(t1)},{p(t2)}{{translate:0}}"
+            f"{p(t3 - ts)}{{translate:{d}px 0}}{p(t3)},100%{{translate:{d}px -{BACK}px}}}}"
+            f"@keyframes s{n}{{0%,{p(tu)}{{translate:0 {DEEP + BACK}px}}{p(t0)},{p(t3)}{{translate:0}}{p(t4)},100%{{translate:0 {DEEP + BACK}px}}}}"
+            f"@keyframes w{n}{{{frames}}}")
 
 
 
@@ -1543,7 +1584,7 @@ VISIT_CSS += drink_css2(2, PERIODS[2], _t1, _t2)
 for vi, (spot, _, _, front, (on, _)) in ((3, ACTIONS[1]), (4, ACTIONS[2])):
     simple(vi, spot, poses_n(numbered(STAGES[vi][1]), standing(front, on), spot, WALK_Y, on))
 for vi, bx, phone in ((6, phone_x, True), (7, front_x, False)):
-    simple(vi, bx, poses_n(numbered(STAGES[vi][1]), front_sit(phone), bx, 23, "fscreen" if phone else None))
+    simple(vi, bx, poses_n(numbered(STAGES[vi][1]), front_sit(phone), bx, FRONT_SIT_Y, "fscreen" if phone else None))
 
 # The toilet: men to the left door, women to the right; each turns to it, it opens, they go in;
 # a while later it opens and out they come. Only the door of whoever is in it moves.
@@ -1597,11 +1638,9 @@ visitor_svg += stage_group(8, f'<g class="ta"><g class="vw">{walks_n(_pa, TALK_A
 VISIT_CSS += leg_css(".v8 .ta", _period, TALK_A, _da, _t1, _t2) + leg_css(".v8 .tb", _period, TALK_B, _db, _t1, _t2)
 VISIT_CSS += ".wks{opacity:calc(1 - var(--bk,0))}.bkp{opacity:var(--bk,0)}.vw{opacity:var(--o,0);transform:var(--f,none)}"
 visitors = [(vi, PERIODS[vi]) for vi in range(len(STAGES))]
-# The path in front of the gate's stairs, from its back edge down, again over whoever is on them:
-# the park's own pixels (and its daylight), so below that edge they are out of sight.
-_g = (GATE_X + 3, GROUND, GATE_W - 6, H - GROUND)
-VIS_FRONT = (f'<rect x="{_g[0]}" y="{_g[1]}" width="{_g[2]}" height="{_g[3]}" fill="url(#park)"/>'
-             f'<rect class="dlt dn" x="{_g[0]}" y="{_g[1]}" width="{_g[2]}" height="{_g[3]}" fill="#56688f"/>')
+# Whoever is on the gate's stairs is cut off just under their feet (in their own group's space:
+# feet on row WALK_Y + 21), so they go down out of sight. (See leg_css.)
+VIS_FRONT = f'<clipPath id="gk"><rect x="-999" y="-99" width="2999" height="{WALK_Y + 21 + 1 + 99}"/></clipPath>'
 
 # Each person's colours once, as a class; a variant shows when its stage's --w is its number.
 CAST_CSS = "".join(f".pp{q}{{{vars_of(PEOPLE[q], _parts[q])}}}" for q in _used)
@@ -1680,7 +1719,7 @@ defs = (
     f'<defs><pattern id="far" width="{FAR_P}" height="{H}" patternUnits="userSpaceOnUse">{layer_svg(far)}</pattern>'
     f'<pattern id="near" width="{NEAR_P}" height="{H}" patternUnits="userSpaceOnUse">{layer_svg(near)}</pattern>'
     f'<pattern id="park" y="-{TOP}" width="{PARK_P}" height="{H + TOP}" patternUnits="userSpaceOnUse">'
-    f'<g transform="translate(0,{TOP})">{layer_svg(park)}<g class="wtr">{paths(WINTER_TREE)}</g>{TALKERS_SVG}</g></pattern>'
+    f'<g transform="translate(0,{TOP})">{layer_svg(park)}<g class="wtr">{paths(WINTER_TREE)}</g>{SNOW_SVG}{TALKERS_SVG}</g></pattern>'
 )
 petal_svg = "".join(
     f'<rect class="pt" x="{sx}" y="{sy}" width="1" height="1" fill="{c}" '
@@ -1695,6 +1734,11 @@ VISIT_COPIES = range(-1, math.ceil((W + PARK_P) / PARK_P))
 # a visitor who is not out at all hours sits in a group the TS side shows or hides, per copy
 import re as _re
 _parts = _re.split(r'(?=<g class="v (?:vb )?v\d+">)', visitor_svg)
+# whoever sits on a bench drawn first: anyone walking by on the path passes in front of them,
+# never between them and the bench
+SITS = {vi for vi, (action, _) in enumerate(STAGES) if action == "bench"}
+_stage = lambda part: int(_re.match(r'<g class="v (?:vb )?v(\d+)">', part).group(1)) if part.startswith('<g class="v ') else -1
+_parts = sorted(_parts, key=lambda part: (_stage(part) >= 0, _stage(part) not in SITS))
 visitor_svg = ""
 for _part in _parts:
     _m = _re.match(r'<g class="v (?:vb )?v(\d+)">', _part)
@@ -1706,11 +1750,20 @@ WINTER_TPL = winter_defs()
 # winter's own colours: the scarf and hat (each person's, below), long sleeves in the jacket's
 # shade, and dark tights
 WINTER_STYLE = (".cw2{stroke:var(--w2,#e84a4a)}.cn2{stroke:var(--n2,#2b3a6a)}"
-                ".ca2{stroke:var(--j2,var(--J,var(--a2)))}.cO{stroke:#3a3048}")
+                ".cO{stroke:#3a3048}"
+                ".wsc{display:inline}")
 _walker_people = {**dict(enumerate(PA.STROLLERS)), WALKERS_N: PA.DOG_WALKER,
                   **{WALKERS_N + 2 + k: c for k, c in enumerate(PA.COMMUTERS)}}
 WINTER_STYLE += "".join(f".w{i}{{{PA.winter_colours(p, i)}}}" for i, p in _walker_people.items())
 WINTER_STYLE += "".join(f".pp{q}{{{PA.winter_colours(PEOPLE[q], 20 + q)}}}" for q in _used)
+# what everyone wears a fifth darker: each clothing colour mixed with a fifth of black
+_dark = lambda v: f"color-mix(in srgb,{v} 80%,#000)"
+WINTER_STYLE += "".join(f".c{pcode(ch)}{{stroke:{_dark(f'var(--{pcode(ch)})')}}}" for ch in sorted(CLS_USED)
+                        if ch in PA.CLOTHES and ch != "a")
+WINTER_STYLE += f".ca2{{stroke:{_dark('var(--j2,var(--J,var(--a2)))')}}}"
+WINTER_PAINT += [(c, PA.darker(c), f".w{WALKERS_N + 1} ") for c in PA.cyclist_clothes()]
+
+
 
 _srnd = random.Random(31)
 TOP_STARS = {(_srnd.randrange(W), _srnd.randrange(-TOP, 0)): "#e4defc" for _ in range(30)}
@@ -1769,7 +1822,7 @@ STYLE = (
     ".blink{animation:blink 2.4s steps(1,end) infinite}@keyframes blink{0%{opacity:0}55%{opacity:1}75%{opacity:0}}"
     ".tlit{animation:hum 6s steps(6,end) infinite alternate}"
     ".vlit{animation:vlit 7s steps(7,end) infinite}@keyframes vlit{0%{transform:translateY(0);opacity:0}10%{opacity:1}70%{transform:translateY(12px);opacity:1}71%{opacity:0}}"
-    ".vs{opacity:var(--s,0)}"
+    ".vs{opacity:var(--s,0)}.wsc{display:none}.sg1{stroke-dasharray:2 1 1 2}"
     + VISIT_CSS + CAST_CSS +
     "@media (prefers-reduced-motion: reduce){.pt{animation:none;opacity:0}.tw0,.tw1,.tw2,.beacon,.win,.neon2,.lampglow,.lamp,.fw0,.fw1,.fw2,.rail,.pa,.pb,.w,.vlit,.v,.vw,.vs,.talk0,.talk1,.talk0r,.talk1r,.blink,.tlit,.rfa,.rna,.sp0,.sp1,.sp2{animation:none}.v,.v .vw,.v .vs,.ta,.tb,.tm,.tf,.dh,.do,.ds{animation:none!important}.v{--s:1}.pb,.vlit,.vw,.fw1,.fw2,.tr,.trb{opacity:0}.tr,.trb{animation:none}.vs{opacity:1}}"
 )
@@ -1852,6 +1905,9 @@ export const PARK_FRONT = {FRONT!r}
 // and the style for them; the bare cherry tree is the park's class wtr, shown only then.
 export const PARK_WINTER_DEFS = {WINTER_TPL!r}
 export const PARK_WINTER_STYLE = {WINTER_STYLE!r}
+// and the colours it turns, [drawn, winter's, within]: the beds' leaves to bushes, the
+// fountain's water to ice, the cyclist's clothes darker
+export const PARK_WINTER_PAINT = {json.dumps(WINTER_PAINT)} as const
 """
 open(out_ts, "w", encoding="utf-8", newline="\n").write(ts)   # LF on every machine
 total = len(STYLE) + len(defs) + len(BACK) + len(MID) + len(FRONT)

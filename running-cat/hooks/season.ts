@@ -73,3 +73,34 @@ export function weatherChanges(from: number, to: number, sky: Sky = {}): number[
   }
   return [...new Set(out)].sort((x, y) => x - y)
 }
+
+// How deep the snow lies, 0..1, `hour` hours into a winter: none at its start; it builds up while
+// it snows (full in 3 hours, a blizzard three times as fast) and melts slowly between snowfalls
+// (all gone in 16 hours), so it seldom melts away before the next.
+export function snowDepthAt(hour: number): number {
+  let depth = 0
+  let at = 0
+  const melt = (to: number): void => {
+    depth = Math.max(0, depth - (to - at) / 16)
+    at = to
+  }
+  for (const [from, to, w] of SPELLS.winter) {
+    if (hour <= from) break
+    melt(from)
+    const end = Math.min(hour, to)
+    depth = Math.min(1, depth + (end - at) * (w === 'blizzard' ? 1 : 1 / 3))
+    at = end
+  }
+  if (hour > at) melt(hour)
+  return depth
+}
+
+// The snow lying at `t`: only in winter, where a demo of snow lies thick at once; the last two
+// hours of the winter it melts away for the spring.
+export function snowDepth(t: number, sky: Sky = {}): number {
+  if (seasonAt(t, sky) !== 'winter') return 0
+  if (sky.weather === 'snow' || sky.weather === 'blizzard') return 1
+  const depth = snowDepthAt(seasonHour(t))
+  const left = seasonEnd(t) - t
+  return sky.season || left >= DAY / 12 ? depth : depth * (left / (DAY / 12))
+}

@@ -273,6 +273,25 @@ def winter_colours(p, k):
     return f"--w2:{scarf};--n2:{WOOLS[(k * 5 + 2) % 8]}"
 
 
+# winter's clothes a fifth darker: the colours of what they wear (not skin, hair or shoes)
+CLOTHES = "JjaWKTPpLlXxRr"
+
+
+def darker(c, f=0.8):
+    return "#" + "".join(f"{round(int(c[i:i + 2], 16) * f):02x}" for i in (1, 3, 5))
+
+
+def cyclist_scarf():
+    """The cyclist's winter scarf: round the collar, its end streaming back in the wind."""
+    c = next(s for s in SCARVES if s != CYCLIST["pal"]["J"])
+    return {xy: c for xy in ((10, 3), (11, 3), (12, 3), (13, 3), (9, 3), (8, 3), (7, 4))}
+
+
+def cyclist_clothes():
+    """The cyclist's clothing colours, drawn plainly: winter darkens them by their colour."""
+    return sorted({c for ch, c in CYCLIST["pal"].items() if ch in CLOTHES})
+
+
 # ---------- people ----------
 SKIN =["#f2c9a0", "#d9a07a", "#b97a56"]
 

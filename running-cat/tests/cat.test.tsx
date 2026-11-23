@@ -4,7 +4,7 @@ import type { TestBody } from 'claude-code/testing'
 import { CAT_FRAMES } from '../hooks/cat-frames'
 import { classed } from '../hooks/register'
 import { CAST, DAY, PARK_DEFS, PARK_WINTER_DEFS, TRAIN_PERIOD, VISITORS, WALKERS } from '../hooks/park'
-import { SEASON, SEASON_START, SPELLS, YEAR, seasonAt, seasonHour, weatherAt } from '../hooks/season'
+import { SEASON, SEASON_START, SPELLS, YEAR, seasonAt, seasonHour, snowDepthAt, weatherAt } from '../hooks/season'
 
 const BAND = {
   plugin: 'running-cat',
@@ -92,7 +92,7 @@ test('people walk in the park and stop by the benches', async ($, on) => {
     expect(PARK_DEFS).toMatch(new RegExp(`class="v (?:vb )?v${k}"`))
   }
   // The drink buyer goes back the way they came, to the gate.
-  expect(source).toMatch(/@keyframes mv2\{0%,[\d.]+%\{translate:(-?\d+)px 22px\}.*100%\{translate:\1px 22px\}\}/)
+  expect(source).toMatch(/@keyframes mv2\{0%,[\d.]+%\{translate:(-?\d+)px -4px\}.*100%\{translate:\1px -4px\}\}/)
   expect(source).toMatch(/\.w6\{animation:/)
   expect(source).toMatch(/\.w7\{animation:/)
 })
@@ -446,25 +446,32 @@ test('everyone comes out of a gate and goes back in at one, so nobody pops in or
   expect(source.match(/<use class="u\d" href="#vis"/g)?.length).toBe(4)
   expect(source).toContain('<use class="u0" href="#vis" x="-640"/>')
   // Every walk on a stage starts and ends in a gate (x 92 of each tile): up its stairs at the path's
-  // back edge, along that edge till clear of the opening, out to the stop; back the same way, down.
+  // back edge in the opening, a step straight down onto the path and out to the stop; back the
+  // same way into the opening, a step straight up to the edge, down the stairs. Never along the
+  // edge, nor a slant.
   let walks = 0
   for (const [, stage, sub, name] of source.matchAll(/\.v(\d+)(?: \.(\w+))?\{animation:(mv\w+) /g)) {
-    const frames = source.match(new RegExp(`@keyframes ${name}\\{(.*?)\\}\\}`))![1]!
-    const at = [...frames.matchAll(/\{translate:(-?\d+)(?:px)?(?: (-?\d+)px)?(?:\}|$)/g)].map(m => `${m[1]}${m[2] === undefined ? '' : ` ${m[2]}`}`)
+    const frames = source.match(new RegExp(`@keyframes ${name}\{(.*?)\}\}`))![1]!
+    const at = [...frames.matchAll(/\{translate:(-?\d+)(?:px)?(?: (-?\d+)(?:px)?)?(?:\}|$)/g)].map(m => `${m[1]}${m[2] === undefined ? '' : ` ${m[2]}`}`)
     const d = Number.parseInt(at[0]!)
-    const e = d - Math.sign(d) * Math.min(19, Math.abs(d) - 1)
-    expect([name, at]).toEqual([name, [`${d} 22`, `${d} -4`, `${e} -4`, '0', `${e} -4`, `${d} -4`, `${d} 22`]])
+    expect([name, at]).toEqual([name, [`${d} -4`, `${d} 0`, '0', `${d} 0`, `${d} -4`]])
+    // the stairs: the walk comes up them from out of sight, and goes down them out of sight again
+    const sink = source.match(new RegExp(`@keyframes s${name.slice(1)}\{(.*?)\}\}`))![1]!
+    expect([name, [...sink.matchAll(/translate:([^}]*)/g)].map(m => m[1])]).toEqual([name, ['0 26px', '0', '0 26px']])
     const group = sub === undefined ? `<g class="v v${stage}">` : `<g class="${sub}">`
     const x = Number(/<g class="vw"><g transform="translate\((\d+),19\)"/.exec(PARK_DEFS.slice(PARK_DEFS.indexOf(group)))![1])
     expect([name, (((x + d) % 640) + 640) % 640]).toEqual([name, 92])
-    // hidden till they come up; at the end they turn their back to the gate, go down, and are gone
-    const vars = source.match(new RegExp(`@keyframes w${name.slice(1)}\\{(.*?)\\}\\}`))![1]!
-    expect(vars).toMatch(/^[\d.]+%\{--o:1;/)
-    expect(vars).toMatch(/[\d.]+%\{--bk:1\}[\d.]+%\{--o:0$/)
+    // hidden till they come up; at the end they turn their back to the gate, go down, and are gone;
+    // cut off under their feet only while on the stairs
+    const vars = source.match(new RegExp(`@keyframes w${name.slice(1)}\{(.*?)\}\}`))![1]!
+    expect(vars).toMatch(/^[\d.]+%\{--k:url\(#gk\);--o:1;/)
+    expect(vars).toMatch(/[\d.]+%\{--k:none\}/)
+    expect(vars).toMatch(/[\d.]+%\{--bk:1;--k:url\(#gk\)\}[\d.]+%\{--o:0$/)
     walks++
   }
-  // The path in front of the stairs, from its back edge down, is drawn again over whoever is on them.
-  expect(source).toContain('<rect x="85" y="36" width="24" height="8" fill="url(#park)"/>')
+  // The stairs' cut: just under the feet of whoever is on them (feet on row 40 of their group).
+  expect(source).toContain('<clipPath id="gk"><rect x="-999" y="-99" width="2999" height="140"/></clipPath>')
+  expect(source).not.toContain('fill="url(#park)"/><rect class="dlt dn" x="85"')
   expect(walks).toBeGreaterThanOrEqual(10)
   // Each walk has its back pose, shown while turned to the gate (or a door).
   expect(source).toMatch(/<g id="wk2" class="pp2"><g class="wks">.*?<\/g><g class="bkp">/)
@@ -541,9 +548,10 @@ test('someone pops into the toilet, someone plays on their phone on a bench, the
   expect(source).toMatch(/\.v5 \.do\{animation:do5 [\d.]+s step-end var\(--vd\) infinite\}/)
   expect(source).toMatch(/@keyframes ds5\{0%\{opacity:0\}[\d.]+%\{opacity:1\}[\d.]+%\{opacity:0\}\}/)
   expect(source).toMatch(/@keyframes do5\{0%\{opacity:0\}([\d.]+%\{opacity:[01]\}){4}\}/)
-  expect(PARK_DEFS).toMatch(/class="v v6">.*?class="vs"><g transform="translate\(135,23\)">.*?class="blink"/)
-  // The fountain's glint runs along the arcs in three frames.
-  expect(source).toContain('class="fw2"')
+  expect(PARK_DEFS).toMatch(/class="v v6">.*?class="vs"><g transform="translate\(135,22\)">.*?class="blink"/)
+  // The fountain's glint runs along the arcs in three frames (in the art: the scene here is a
+  // winter's, with the fountain off).
+  expect(PARK_DEFS).toContain('class="fw2"')
   expect(source).toContain('@keyframes f3{')
 })
 
@@ -555,9 +563,9 @@ test('someone sits up straight on the second bench, facing out, without blinking
 
   const source = (await band($, false)).source ?? ''
   const v7 = PARK_DEFS.slice(PARK_DEFS.indexOf('class="v v7">'))
-  expect(v7).toMatch(/^class="v v7">.*?class="vs"><g transform="translate\(405,23\)">/)
-  // the last stage: up to the end of the visitors
-  expect(v7.slice(0, v7.indexOf('id="pet"'))).not.toContain('blink')
+  expect(v7).toMatch(/^class="v v7">.*?class="vs"><g transform="translate\(405,22\)">/)
+  // up to the next stage
+  expect(v7.slice(0, v7.indexOf('<g class="h'))).not.toContain('blink')
 })
 
 // The park's day is 1440 s: 60 s an hour. 2 a.m. and noon, a whole number of days in.
@@ -699,11 +707,14 @@ test('people glide with the park, and a still park rests on a whole screen pixel
   on('prompt.submit', (_, e) => ({ text: e.text }))
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   await clock.settle()
-  expect((await band($, true)).source).toContain('.lp,.w{shape-rendering:geometricPrecision}')
+  // a still park is drawn sharp: smoothed, a person's pixels part where two colours meet
+  expect((await band($, false)).source).not.toContain('geometricPrecision')
   await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } })
+  await clock.advance(1_000)
+  expect((await band($, true)).source).toContain('.lp,.w{shape-rendering:geometricPrecision}')
   // 1.234 s at 18 art px a second (after 0.8 s walking off) is 22.212 px: held at 22, a whole
   // screen pixel.
-  await clock.advance(2_034)
+  await clock.advance(1_034)
   const held = (await band($, false)).source?.match(/\.lp\{transform:translateX\(-([\d.]+)px\)\}/)?.[1]
   expect(held).toBe('22')
 })
@@ -820,7 +831,7 @@ test('winter: the cherry tree stands bare under snow, and everyone wears a hat a
   expect(winter).toContain('class="cw2"')
   expect(winter).toContain('class="cn2"')
   expect(autumn).not.toContain('class="cw2"')
-  expect(winter).toContain('.ca2{stroke:var(--j2,var(--J,var(--a2)))}')
+  expect(winter).toContain('.ca2{stroke:color-mix(in srgb,var(--j2,var(--J,var(--a2))) 80%,#000)}')
   expect(winter).toMatch(/\.w0\{--w2:#[0-9a-f]{6};--n2:#[0-9a-f]{6}\}/)
   expect(winter).toMatch(/\.pp0\{--w2:#[0-9a-f]{6};--n2:#[0-9a-f]{6}\}/)
   for (const id of ids) expect([id, (winter.match(new RegExp(`<g id="${id}">`, 'g')) ?? []).length]).toEqual([id, 1])
@@ -831,6 +842,38 @@ test('the colours turn to the next season\'s over its last two hours', async ($,
   const [early, half] = await scenesAt($, on, [inSeason(1, -3), inSeason(1, -1)])
   expect(early).not.toContain('[stroke="#ff9cc8"]')
   expect(half).toContain('[stroke="#ff9cc8"]{stroke:#a29e90}')
+})
+
+test('winter: snow lies on things, building up as it snows and melting slowly between', async ($, on) => {
+  // none at the start, full 3 hours into the first snowfall, half gone 8 hours after it ends
+  expect(snowDepthAt(0)).toBe(0)
+  expect(snowDepthAt(6)).toBe(0)
+  expect(snowDepthAt(7.5)).toBe(0.5)
+  expect(snowDepthAt(9)).toBe(1)
+  expect(snowDepthAt(15 + 8)).toBe(0.5)
+  // it seldom melts away before the next: a little is left when the second comes
+  expect(snowDepthAt(30)).toBe(0.0625)
+  // drawn in winter only: the dusting and the cover, melting over the drawing's window (20h: the
+  // first snowfall over five hours, about two thirds lying)
+  const [autumn, winter] = await scenesAt($, on, [inSeason(2, 20), inSeason(3, 20)])
+  for (const cls of ['sg1', 'sg2']) {
+    expect(winter).toContain(`<g class="${cls}">`)
+    expect(autumn).not.toContain(`<g class="${cls}">`)
+  }
+  expect(winter).toMatch(/@keyframes sg1x\{0%\{opacity:1\}/)
+  expect(winter).toMatch(/@keyframes sg2x\{0%\{opacity:\.5\d\}/)
+  // the flowers asleep and the fountain off; the cyclist's scarf; clothes a fifth darker
+  for (const cls of ['flw', 'fjet', 'fw0']) {
+    expect(winter).not.toContain(`<g class="${cls}">`)
+    expect(autumn).toContain(`<g class="${cls}">`)
+  }
+  // (the hidden crown not drawn at all)
+  expect(winter.length).toBeLessThan(autumn.length - 2000)
+  expect(winter).toContain('.wsc{display:inline}')
+  expect(winter).toContain('.cJ{stroke:color-mix(in srgb,var(--J) 80%,#000)}')
+  expect(autumn).not.toContain('color-mix')
+  expect(winter).toMatch(/\.w7 (\.k\w+|\[stroke="#2fb59a"\])\{stroke:#26917b\}/)
+  expect(winter).toMatch(/(\.k\w+|\[stroke="#36b8e3"\])\{stroke:#a8d4e8\}/)
 })
 
 test('winter snows: flakes falling through the park, and people still come out in light snow', async ($, on) => {
@@ -848,14 +891,37 @@ test('winter snows: flakes falling through the park, and people still come out i
   expect(source).toMatch(/%\{--w:[1-9]\}/)
 })
 
+test('whoever sits on a bench is drawn before anyone walking: passers-by go in front of them', () => {
+  const order = [...PARK_DEFS.matchAll(/<g class="h(\d+)">/g)].map(m => Number(m[1]))
+  const sits = VISITORS.filter(v => v.action === 'bench').map(v => v.i)
+  expect(order.slice(0, sits.length).sort()).toEqual([...sits].sort())
+})
+
 test('a blizzard: thick slanting snow and a white haze', async ($, on) => {
-  // well into it, past its fade in
+  // well into it, past its build-up
   const [from] = SPELLS.winter.find(s => s[2] === 'blizzard')!
-  const source = await sceneAt($, on, inSeason(3, from + 0.6))
+  const source = await sceneAt($, on, inSeason(3, from + 0.3))
   expect(source).toContain('<g class="bzw">')
   expect(startsAt(source, 'bzw')).toBe('1')
   expect(source).toContain('@keyframes bza{to{transform:translate(-60px,44px)}}')
   // (nobody is out at a stop in it: the cast's plan keeps every visit dry, blizzards and all)
+})
+
+test('a blizzard builds up and dies down: the snow thickens before it and eases off after', async ($, on) => {
+  const [from, to] = SPELLS.winter.find(s => s[2] === 'blizzard')!
+  // 20 s before it: its slanting snow 40 s on the way (of 50 to its height), the heavier snow
+  // 100 s (of 150), the sky a little darker
+  const [before, after, later] = await scenesAt($, on, [inSeason(3, from - 1 / 3), inSeason(3, to + 1), inSeason(3, to + 2.5)])
+  expect(weatherAt(inSeason(3, from - 1 / 3) / 1000)).toBe('snow')
+  expect(startsAt(before, 'bzw')).toBe('.4')
+  expect(startsAt(before, 'hvy')).toBe('.67')
+  expect(startsAt(before, 'rcl')).toBe('.39')
+  // and it eases off the same way: a minute after, its own snow gone, the heavier still falling
+  expect(startsAt(after, 'bzw')).toBe('0')
+  expect(startsAt(after, 'hvy')).toBe('.4')
+  expect(after).toContain('<g class="sfc">')
+  // past that, its art no longer drawn
+  expect(later).not.toContain('<g class="hvy">')
 })
 
 test('/running-cat season and weather force a demo, this session only', async ($, on) => {
