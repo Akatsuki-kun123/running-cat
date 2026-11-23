@@ -1389,7 +1389,6 @@ TURN = 1.2                      # turned to a door before going in
 SINK = 2.0                      # going down the gate's stairs out of sight, or coming up them
 DEEP = 22                       # how far down: their head below the path's back edge
 BACK = 4                        # the stairs go down at the path's back edge, this far behind the walk
-STEP = 6                        # then a short step down onto the path's walk line, over this many px
 EDGE = 19                       # walked along that edge till clear of the opening (the path in front
                                 # of it covers anyone over it)
 GAP = 1.5                       # nobody there at either end of a visit
@@ -1487,16 +1486,16 @@ def leg_css(sel, period, x, d, t1, t2, door=False):
     frames += f"{p(t2)}{{--o:1;--f:{tout};--s:0}}{p(t3)}{{--bk:1}}{p(t4)}{{--o:0}}"
     # up the stairs at the path's back edge, along it clear of the opening, out onto the path to the
     # stop; and back the same way, turned to the gate at its edge, down the stairs
-    # (not a long slant down to the stop: that took them across the feet of the benches and
-    # machines between, as if through them)
+    # Clear of it they step straight down onto the path's walk line, and on the way back they walk
+    # to that point and step straight up to the edge (never a slant: a long one took them across
+    # the feet of the benches and machines between, as if through them). The walk's time is shared
+    # out by the distance, the step down counted in.
     e = min(EDGE, abs(d) - 1)
     ex = d - e if d > 0 else d + e
-    te = e / VISIT_SPEED
-    s_ = min(STEP, abs(ex))
-    ex2 = ex - s_ if d > 0 else ex + s_
-    ts = s_ / VISIT_SPEED
-    down = f"{p(t0 + te + ts)}{{translate:{ex2}px 0}}" if ex2 else ""
-    up = f"{p(t3 - te - ts)}{{translate:{ex2}px 0}}" if ex2 else ""
+    k = (t1 - t0) / (abs(d) + BACK)
+    te, ts = e * k, BACK * k
+    down = f"{p(t0 + te + ts)}{{translate:{ex}px 0}}"
+    up = f"{p(t3 - te - ts)}{{translate:{ex}px 0}}"
     return (f"{sel}{{animation:m{n} {period}s linear var(--vd) infinite,w{n} {period}s steps(1,end) var(--vd) infinite}}"
             f"@keyframes m{n}{{0%,{p(tu)}{{translate:{d}px {DEEP}px}}{p(t0)}{{translate:{d}px -{BACK}px}}"
             f"{p(t0 + te)}{{translate:{ex}px -{BACK}px}}{down}{p(t1)},{p(t2)}{{translate:0}}"
