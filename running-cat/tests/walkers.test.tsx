@@ -2,6 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import { DAY, VISITORS, WALKERS } from '../hooks/park'
+import { SEASON, SEASON_START, YEAR } from '../hooks/season'
 
 const BAND = {
   plugin: 'running-cat',
@@ -91,6 +92,40 @@ for (const hour of [9.37, 14.71, 17.13]) {
     }
     expect(pops).toEqual([])
     expect(redraws).toBeGreaterThan(1)
+  })
+}
+
+// Summer's shower at hour 13 into the season, and one at 86: redrawn every 3 s from 40 s before
+// it, the cat idle. A redraw on the very second a walker starts a lap must see them on that lap,
+// not the one before: the one before began in the rain (out with an umbrella, or kept home), and
+// the next redraw had them pop in mid-scene or change their look (v0.40.0 and before).
+for (const hours of [13, 86]) {
+  test(`a redraw just as a walker starts a lap sees the lap they are on (summer, ${hours}h)`, async ($, on) => {
+    const spring = Math.floor((1440 * 1000) / YEAR) * YEAR + SEASON_START
+    const clock = mock.clock(on, { now: (spring + SEASON + hours * 60 - 40) * 1000 })
+    on('session.start', (_, e) => ({ cwd: e.cwd }))
+    await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+    const idle = async (): Promise<string> => {
+      const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, isWorking: false } })
+      const svg = (await ui.find({ type: 'Svg' })) as Drawn
+      await ui.unmount()
+      return svg?.props?.source ?? ''
+    }
+    let before = await idle()
+    const pops: string[] = []
+    for (let n = 1; n <= 50; n++) {
+      await clock.advance(3_000)
+      const after = await idle()
+      for (const { i } of WALKERS) {
+        const x = where(after, i, 0)
+        if (x === null || x < -10 || x > 960) continue
+        for (const cls of [`wn${i}`, `ww${i}`, `wd${i}`]) {
+          if (shows(before, cls, 3_000) !== shows(after, cls, 0)) pops.push(`${cls} at x${Math.round(x)}, ${3 * n - 40} s from the shower`)
+        }
+      }
+      before = after
+    }
+    expect(pops).toEqual([])
   })
 }
 

@@ -172,7 +172,7 @@ def _back_head(rows):
             out.append("....SSS....")
             continue
         lo = max(2, min(min(xs), 10 - max(xs)))
-        ch = "C" if "C" in row else "c" if "c" in row and y > 0 else "H"
+        ch = "C" if "C" in row else "n" if "n" in row else "c" if "c" in row and y > 0 else "H"
         out.append("." * lo + ch * (11 - 2 * lo) + "." * lo)
     return out
 
@@ -205,8 +205,76 @@ for step, rows in (("a", DOG), ("b", DOG_B)):
     TEMPLATES[f"dog_{step}"] = f
 
 
+# ---------- winter: the same templates dressed for the cold ----------
+# In winter the band swaps these in for the templates of the same name, so everyone keeps their
+# shape, hair and colours but wears a knitted hat (n, its bobble w), a scarf (w), long sleeves
+# and tights (the style does those two). Hats with a crown of their own (cap, beanie, helmet) stay.
+WINTER = {}
+_HATS = {   # rows 0 and 1 of each head under a knitted hat, and whether it has a bobble on top
+    "short":   (["...nnnn....", "..nnnnnnn.."], True),
+    "glasses": (["...nnnn....", "..nnnnnnn.."], True),
+    "elder":   (["...nnnn....", "..nnnnnnn.."], True),
+    "bob":     (["...nnnnn...", "..nnnnnnn.."], True),
+    "long":    (["...nnnnn...", "..nnnnnnn.."], True),
+    "pony":    (["...nnnnn...", ".Hnnnnnnn.."], True),
+    "spiky":   (["..nnnnn....", "..nnnnnnn.."], True),
+    "bun":     (["HH.nnnn....", "HHnnnnnnn.."], False),
+}
+_FRONT_HATS = {"short": "...nnnnn...", "glasses": "...nnnnn...", "spiky": "...nnnnn..."}
+
+
+def _hatted(rows, top, bobble):
+    f = grid(top + rows[2:])
+    if bobble:
+        f[(5, -1)] = "w"
+    return f
+
+
+for k, (top, bobble) in _HATS.items():
+    WINTER[f"head_{k}"] = _hatted(HEADS[k], top, bobble)
+    if k not in ("spiky", "bun", "pony"):
+        WINTER[f"bhead_{k}"] = grid(_back_head(top + HEADS[k][2:])) | {(5, -1): "w"}
+for k, row0 in _FRONT_HATS.items():
+    WINTER[f"fhead_{k}"] = _hatted(FRONT_HEADS[k], [row0, "..nnnnnnn.."], True)
+WINTER["bhead_spiky"] = grid(["...nnnnn...", "..nnnnnnn..", "..HHHHHHH..", "..SHHHHHS..", "...HHHHH...", "....SSS...."]) | {(5, -1): "w"}
+WINTER["bhead_bun"] = grid(["....HHH....", "..nnnnnnn..", "..HHHHHHH..", "..HHHHHHH..", "..HHHHHHH..", "....SSS...."])
+WINTER["bhead_pony"] = grid(["...nnnnn...", "..nnnnnnn..", "..HHHHHHH..", "..HHHHHHH..", "..HHHHHHH..", "....SHS....",
+                             ".....H....."]) | {(5, -1): "w"}
+
+
+def _scarfed(name, tail):
+    """The template with a scarf wound round the neck (row 6) and its end hanging at `tail`."""
+    f = {k: c for k, c in TEMPLATES[name].items() if k[1] != 6 or c not in "SK"}
+    for x in range(3, 8):
+        if (x, 6) not in f or f[(x, 6)] in "SK":
+            f[(x, 6)] = "w"
+    for x, y in tail:
+        f[(x, y)] = "w"
+    return f
+
+
+for k in TORSOS:
+    WINTER[f"body_{k}"] = _scarfed(f"body_{k}", [(3, 7), (3, 8)])
+for k in ("plain", "hoodie", "bomber"):
+    WINTER[f"fbody_{k}"] = _scarfed(f"fbody_{k}", [(4, 7), (4, 8)])
+for k in ("bbody_plain", "bbody_bomber", "sbody_bomber"):
+    WINTER[k] = _scarfed(k, [])
+for step in ("a", "b", "s"):                     # a long skirt's bare shins in tights
+    WINTER[f"legs_long_{step}"] = {k: ("O" if c == "S" else c) for k, c in TEMPLATES[f"legs_long_{step}"].items()}
+# each person's knitted hat and scarf: a scarf unlike their jacket, the hat a darker wool
+SCARVES = ["#e84a4a", "#ffd84a", "#36c8d8", "#ff7ab8", "#f3f0fb", "#5fd39a", "#ff8a3a", "#a58bff"]
+WOOLS = ["#2b3a6a", "#8a2a3a", "#e6e2f0", "#2f6a50", "#c87a20", "#4a3290", "#3a3448", "#a03a6a"]
+
+
+def winter_colours(p, k):
+    """--w2 (scarf) and --n2 (hat) for person p, the k-th drawn."""
+    jacket = p["pal"].get("J", "")
+    scarf = next(s for n in range(8) if (s := SCARVES[(k * 3 + n) % 8]) != jacket)
+    return f"--w2:{scarf};--n2:{WOOLS[(k * 5 + 2) % 8]}"
+
+
 # ---------- people ----------
-SKIN = ["#f2c9a0", "#d9a07a", "#b97a56"]
+SKIN =["#f2c9a0", "#d9a07a", "#b97a56"]
 
 
 def P(head, torso, legs, gear, skin, **pal):

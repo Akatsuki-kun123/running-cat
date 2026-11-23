@@ -644,6 +644,8 @@ petals = []
 
 
 WHITE_DOTS = 28   # white blossoms dotted over the cherry tree
+WINTER_TREE = {}  # the bare tree's limbs, twigs and snow, drawn over the crown in winter (class wtr)
+SNOW_ON = "#eef3fb"
 
 def cherry(tx):
     """A big cherry tree in full blossom over a ring of stones: a leaning trunk forking into limbs,
@@ -741,6 +743,41 @@ def cherry(tx):
         park.rect(lx - 1, ly, 3, 3, LANTERN)
         park.put(lx, ly + 1, LANTERN_HI)
         park.anim("lantern", lx - 2, ly - 1, 5, 5, LANTERN_HI)
+    # winter: the band hides the crown's colours, and this draws what it hid, the trunk's top and
+    # the limbs, with bare twigs off their ends and snow lying along their tops
+    crown_cols = set(BL[1:5]) | {"#fff4f9"}
+    bare = {}
+
+    def bline(x0, y0, x1, y1, c, w=1):
+        n = max(abs(x1 - x0), abs(y1 - y0), 1)
+        for k in range(n + 1):
+            x, y = round(x0 + (x1 - x0) * k / n), round(y0 + (y1 - y0) * k / n)
+            for d in range(w):
+                bare[(x + d, y)] = c
+
+    for y in range(12, 24):
+        x0 = tx - 2 + lean(y)
+        for d, c in enumerate((BARK_HI, BARK, BARK_DK if y % 5 == 2 else BARK, BARK_DK)):
+            bare[(x0 + d, y)] = c
+    for at, dx, ey in limbs:
+        sx, sy = tx + lean(at) + (2 if dx > 0 else -2), at
+        mx, my = sx + dx * 2 // 3, sy + (ey - sy) * 2 // 3
+        bline(sx, sy, mx, my, BARK, 2)
+        bline(mx, my, sx + dx, ey, BARK_DK, 1)
+    bline(top[0], top[1], top[0] + 2, top[1] - 12, BARK, 2)
+    trnd = random.Random(17)
+    for ex, ey in ends:
+        for _ in range(2):
+            side = 1 if trnd.random() < 0.5 else -1
+            bline(ex, ey, ex + side * trnd.randint(2, 4), ey - trnd.randint(2, 4), BARK_DK)
+    free = lambda xy: xy[1] >= -TOP and park.grid.get(xy) in crown_cols | {None}
+    bare = {xy: c for xy, c in bare.items() if free(xy)}
+    snow = {}
+    for (x, y) in sorted(bare):
+        if (x, y - 1) not in bare and free((x, y - 1)) and trnd.random() < 0.6:
+            snow[(x, y - 1)] = SNOW_ON
+    WINTER_TREE.update(bare)
+    WINTER_TREE.update(snow)
     # a low ring of stones round the foot of the tree, seen from a little above: the back of the
     # ring behind the trunk, earth inside, the front kerb with its lit top and darker face
     rx, cy, ry = 13, 37, 2.5
@@ -1035,20 +1072,27 @@ def uses(parts):
     return "".join(use(n) for n in parts)
 
 
-def template_defs():
-    out = ""
-    for name, tid in TPL_IDS.items():
-        pix = {}
-        for k, ch in PA.TEMPLATES[name].items():
-            if ch.startswith("#"):
-                pix[k] = ch
-            elif ch in PA.FIXED:
-                pix[k] = PA.FIXED[ch]
-            else:
+def template_markup(tid, pixels, track=True):
+    pix = {}
+    for k, ch in pixels.items():
+        if ch.startswith("#"):
+            pix[k] = ch
+        elif ch in PA.FIXED:
+            pix[k] = PA.FIXED[ch]
+        else:
+            if track:
                 CLS_USED.add(ch)
-                pix[k] = "@" + pcode(ch)
-        out += f'<g id="{tid}">' + re.sub(r'stroke="@(\w+)"', r'class="c\1"', paths(pix)) + "</g>"
-    return out
+            pix[k] = "@" + pcode(ch)
+    return f'<g id="{tid}">' + re.sub(r'stroke="@(\w+)"', r'class="c\1"', paths(pix)) + "</g>"
+
+
+def template_defs():
+    return "".join(template_markup(tid, PA.TEMPLATES[name]) for name, tid in TPL_IDS.items())
+
+
+def winter_defs():
+    """The templates winter dresses differently, under the same ids: the band swaps them in."""
+    return "".join(template_markup(tid, PA.WINTER[name], False) for name, tid in TPL_IDS.items() if name in PA.WINTER)
 
 
 def colour_css():
@@ -1345,6 +1389,7 @@ TURN = 1.2                      # turned to a door before going in
 SINK = 2.0                      # going down the gate's stairs out of sight, or coming up them
 DEEP = 22                       # how far down: their head below the path's back edge
 BACK = 4                        # the stairs go down at the path's back edge, this far behind the walk
+STEP = 6                        # then a short step down onto the path's walk line, over this many px
 EDGE = 19                       # walked along that edge till clear of the opening (the path in front
                                 # of it covers anyone over it)
 GAP = 1.5                       # nobody there at either end of a visit
@@ -1442,13 +1487,20 @@ def leg_css(sel, period, x, d, t1, t2, door=False):
     frames += f"{p(t2)}{{--o:1;--f:{tout};--s:0}}{p(t3)}{{--bk:1}}{p(t4)}{{--o:0}}"
     # up the stairs at the path's back edge, along it clear of the opening, out onto the path to the
     # stop; and back the same way, turned to the gate at its edge, down the stairs
+    # (not a long slant down to the stop: that took them across the feet of the benches and
+    # machines between, as if through them)
     e = min(EDGE, abs(d) - 1)
     ex = d - e if d > 0 else d + e
     te = e / VISIT_SPEED
+    s_ = min(STEP, abs(ex))
+    ex2 = ex - s_ if d > 0 else ex + s_
+    ts = s_ / VISIT_SPEED
+    down = f"{p(t0 + te + ts)}{{translate:{ex2}px 0}}" if ex2 else ""
+    up = f"{p(t3 - te - ts)}{{translate:{ex2}px 0}}" if ex2 else ""
     return (f"{sel}{{animation:m{n} {period}s linear var(--vd) infinite,w{n} {period}s steps(1,end) var(--vd) infinite}}"
             f"@keyframes m{n}{{0%,{p(tu)}{{translate:{d}px {DEEP}px}}{p(t0)}{{translate:{d}px -{BACK}px}}"
-            f"{p(t0 + te)}{{translate:{ex}px -{BACK}px}}{p(t1)},{p(t2)}{{translate:0}}"
-            f"{p(t3 - te)}{{translate:{ex}px -{BACK}px}}{p(t3)}{{translate:{d}px -{BACK}px}}"
+            f"{p(t0 + te)}{{translate:{ex}px -{BACK}px}}{down}{p(t1)},{p(t2)}{{translate:0}}"
+            f"{up}{p(t3 - te)}{{translate:{ex}px -{BACK}px}}{p(t3)}{{translate:{d}px -{BACK}px}}"
             f"{p(t4)},100%{{translate:{d}px {DEEP}px}}}}@keyframes w{n}{{{frames}}}")
 
 
@@ -1629,7 +1681,7 @@ defs = (
     f'<defs><pattern id="far" width="{FAR_P}" height="{H}" patternUnits="userSpaceOnUse">{layer_svg(far)}</pattern>'
     f'<pattern id="near" width="{NEAR_P}" height="{H}" patternUnits="userSpaceOnUse">{layer_svg(near)}</pattern>'
     f'<pattern id="park" y="-{TOP}" width="{PARK_P}" height="{H + TOP}" patternUnits="userSpaceOnUse">'
-    f'<g transform="translate(0,{TOP})">{layer_svg(park)}{TALKERS_SVG}</g></pattern>'
+    f'<g transform="translate(0,{TOP})">{layer_svg(park)}<g class="wtr">{paths(WINTER_TREE)}</g>{TALKERS_SVG}</g></pattern>'
 )
 petal_svg = "".join(
     f'<rect class="pt" x="{sx}" y="{sy}" width="1" height="1" fill="{c}" '
@@ -1651,6 +1703,15 @@ for _part in _parts:
         _part = f'<g class="h{_m.group(1)}">{_part}</g>'
     visitor_svg += _part
 defs += f'{WALK_DEFS}<g id="vis">{visitor_svg}{VIS_FRONT}</g><g id="pet">{petal_svg}</g>{TRAIN_DEF}{RAIN_DEFS}{template_defs()}</defs>'
+WINTER_TPL = winter_defs()
+# winter's own colours: the scarf and hat (each person's, below), long sleeves in the jacket's
+# shade, and dark tights
+WINTER_STYLE = (".cw2{stroke:var(--w2,#e84a4a)}.cn2{stroke:var(--n2,#2b3a6a)}"
+                ".ca2{stroke:var(--j2,var(--J,var(--a2)))}.cO{stroke:#3a3048}")
+_walker_people = {**dict(enumerate(PA.STROLLERS)), WALKERS_N: PA.DOG_WALKER,
+                  **{WALKERS_N + 2 + k: c for k, c in enumerate(PA.COMMUTERS)}}
+WINTER_STYLE += "".join(f".w{i}{{{PA.winter_colours(p, i)}}}" for i, p in _walker_people.items())
+WINTER_STYLE += "".join(f".pp{q}{{{PA.winter_colours(PEOPLE[q], 20 + q)}}}" for q in _used)
 
 _srnd = random.Random(31)
 TOP_STARS = {(_srnd.randrange(W), _srnd.randrange(-TOP, 0)): "#e4defc" for _ in range(30)}
@@ -1725,7 +1786,7 @@ walkers_ts = ", ".join(
 visitors_ts = ", ".join(f"{{ i: {i}, period: {t}, action: '{STAGES[i][0]}', people: [{', '.join(map(str, STAGES[i][1]))}], shown: [{SHOWN[i][0]:.1f}, {SHOWN[i][1]:.1f}] }}"
                        for i, t in visitors)
 cast_ts = ", ".join(f"'{cid}'" for cid in [c for c, _ in CAST] + [f"pair{n}" for n in range(len(PAIRS))])
-def short_ids(texts):
+def short_ids(texts, extra=()):
     """The templates' ids, shortest for the most used: one letter, then two."""
     import collections
     import string
@@ -1735,7 +1796,7 @@ def short_ids(texts):
     taken = set(re.findall(r'id="([^"]+)"', "".join(texts)))
     names = [n for n in names if n not in taken]
     ids = {tok: names[n] for n, (tok, _) in enumerate(count.most_common())}
-    return [re.sub("\d+", lambda m: ids[m.group(0)], text) for text in texts]
+    return [re.sub("\d+", lambda m: ids[m.group(0)], text) for text in [*texts, *extra]]
 
 
 # Each ambient loop keeps its own offset in --d, and the band adds the wall clock, --t, which
@@ -1744,7 +1805,7 @@ AMBIENT = (".tw0,.tw1,.tw2,.beacon,.win,.neon2,.lampglow,.lamp,.fw0,.fw1,.fw2,.r
            ".talk0,.talk1,.talk0r,.talk1r,.blink,.tlit,.vlit,.rfa,.rna,.sp0,.sp1,.sp2")
 STYLE = re.sub(r"animation-delay:(-[\d.]+s)", r"--d:\g<1>", STYLE) + AMBIENT + "{animation-delay:calc(var(--d,0s) - var(--t,0s))}"
 defs = re.sub(r"animation-delay:(-[\d.]+s)", r"--d:\g<1>", defs)
-STYLE, defs, BACK, MID, FRONT = short_ids([STYLE, defs, BACK, MID, FRONT])
+STYLE, defs, BACK, MID, FRONT, WINTER_TPL = short_ids([STYLE, defs, BACK, MID, FRONT], [WINTER_TPL])
 ts = f"""// Generated by make_park.py (running-cat-art): a Neon Tokyo night park in scrolling layers, with walkers.
 // Original pixel art in the Neon Tokyo palette.
 export const PARK_W = {W}
@@ -1788,6 +1849,10 @@ export const PARK_DEFS = {defs!r}
 export const PARK_BACK = {BACK!r}
 export const PARK_MID = {MID!r}
 export const PARK_FRONT = {FRONT!r}
+// Winter: the templates it dresses for the cold (the same ids, swapped in for PARK_DEFS' own),
+// and the style for them; the bare cherry tree is the park's class wtr, shown only then.
+export const PARK_WINTER_DEFS = {WINTER_TPL!r}
+export const PARK_WINTER_STYLE = {WINTER_STYLE!r}
 """
 open(out_ts, "w", encoding="utf-8", newline="\n").write(ts)   # LF on every machine
 total = len(STYLE) + len(defs) + len(BACK) + len(MID) + len(FRONT)

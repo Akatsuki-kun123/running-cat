@@ -3,7 +3,7 @@ import type { TestBody } from 'claude-code/testing'
 
 import { CAT_FRAMES } from '../hooks/cat-frames'
 import { classed } from '../hooks/register'
-import { CAST, DAY, PARK_DEFS, TRAIN_PERIOD, VISITORS, WALKERS } from '../hooks/park'
+import { CAST, DAY, PARK_DEFS, PARK_WINTER_DEFS, TRAIN_PERIOD, VISITORS, WALKERS } from '../hooks/park'
 import { SEASON, SEASON_START, SPELLS, YEAR, seasonAt, seasonHour, weatherAt } from '../hooks/season'
 
 const BAND = {
@@ -584,9 +584,11 @@ test('a day goes round: sky, sun and moon, a clock, lamps on by night', async ($
 
 test('at night fewer people are out, and they come and go only at the turn of a lap', async ($, on) => {
   const source = await sceneAt($, on, AT_2AM)
-  // Out from 6 to 23: off now; out all hours: on now, gone only after running from a shower.
+  // Out from 6 to 23: off now; out all hours: on now (here all night: the lap they start as the
+  // night's shower does sets off in it, so they take their umbrella and need not run)
   expect(source).toMatch(/@keyframes wn0\{0%\{opacity:0\}/)
-  expect(source).toMatch(/@keyframes wn1\{0%\{opacity:1\}/)
+  expect(source).not.toMatch(/@keyframes wn1\{0%\{opacity:0\}/)
+  expect(source).toMatch(/\.ww1\{animation:ww1 /)
   // In the copies on screen only the night owls visit: the drink buyer, the reader in pink, the
   // phone player.
   const night = [CAST.indexOf('red'), CAST.indexOf('pink'), CAST.indexOf('cap')]
@@ -801,8 +803,27 @@ test('spring has its blossom and falling petals; summer is green, autumn red wit
   expect(autumn).toContain('[stroke="#ff9cc8"]{stroke:#e0603a}')
   expect(autumn).toContain('<g class="lfa"><rect y="-88" width="1120" height="132" fill="url(#lf)"/></g>')
   expect(autumn).toContain('<pattern id="lf"')
-  expect(winter).toContain('[stroke="#ff9cc8"]{stroke:#c4cad8}')
+  expect(winter).toContain('[stroke="#ff9cc8"]{stroke:none}')
   expect(winter).not.toContain('url(#lf)')
+})
+
+test('winter: the cherry tree stands bare under snow, and everyone wears a hat and a scarf', async ($, on) => {
+  const [autumn, winter] = await scenesAt($, on, [inSeason(2, 20), inSeason(3, 20)])
+  // the crown's five colours hidden, the bare limbs (class wtr) drawn only now
+  expect(winter).toContain('[stroke="#ff9cc8"]{stroke:none}')
+  expect((winter.match(/\{(stroke:none|fill:none!important)\}/g) ?? []).length).toBeGreaterThanOrEqual(5)
+  expect(winter).toContain('<g class="wtr">')
+  expect(autumn).not.toContain('<g class="wtr">')
+  // the winter templates swapped in for the same ids, and their colours: hat, scarf, sleeves, tights
+  const ids = [...PARK_WINTER_DEFS.matchAll(/<g id="(\w+)">/g)].map(m => m[1]!)
+  expect(ids.length).toBeGreaterThan(20)
+  expect(winter).toContain('class="cw2"')
+  expect(winter).toContain('class="cn2"')
+  expect(autumn).not.toContain('class="cw2"')
+  expect(winter).toContain('.ca2{stroke:var(--j2,var(--J,var(--a2)))}')
+  expect(winter).toMatch(/\.w0\{--w2:#[0-9a-f]{6};--n2:#[0-9a-f]{6}\}/)
+  expect(winter).toMatch(/\.pp0\{--w2:#[0-9a-f]{6};--n2:#[0-9a-f]{6}\}/)
+  for (const id of ids) expect([id, (winter.match(new RegExp(`<g id="${id}">`, 'g')) ?? []).length]).toEqual([id, 1])
 })
 
 test('the colours turn to the next season\'s over its last two hours', async ($, on) => {
@@ -843,7 +864,7 @@ test('/running-cat season and weather force a demo, this session only', async ($
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   const said = await $.command.run({ command: 'running-cat', args: 'season winter' })
   expect(said.text).toContain('Park: winter (demo), day 1 of 4')
-  expect((await band($, false)).source).toContain('[stroke="#ff9cc8"]{stroke:#c4cad8}')
+  expect((await band($, false)).source).toContain('[stroke="#ff9cc8"]{stroke:none}')
   await $.command.run({ command: 'running-cat', args: 'weather blizzard' })
   const storm = (await band($, false)).source ?? ''
   expect(startsAt(storm, 'bzw')).toBe('1')

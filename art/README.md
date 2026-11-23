@@ -52,4 +52,5 @@ git diff --stat
 
 - Mỗi màu dùng nhiều lần được đặt một tên lớp ngắn khi chạy (`register.tsx`). Phần đổi màu theo mùa trong `register.tsx` tìm cây anh đào và hàng rào theo **mã màu gốc**: `#d65c98`, `#f07cb4`, `#ff9cc8`, `#ffb7d5`, `#fff4f9`, `#0f2a2e`, `#17403f`. Nếu đổi các màu này ở đây thì phải đổi cả `SEASON_BASE` trong `register.tsx`.
 - Đoạn "bench visitors" là cách vẽ khách ghé thăm đời đầu. Đoạn này vẫn được giữ vì nó dựng các hàm dùng chung, và thứ tự nó dùng các phần hình quyết định tên các mẫu hình trong `park.ts`. Xoá nó thì hình không đổi nhưng `park.ts` sẽ khác byte.
+- Mùa đông: `people_art.py` có bộ mẫu `WINTER` (đầu đội mũ len, thân quàng khăn, váy dài mặc quần tất). `make_park.py` xuất chúng thành `PARK_WINTER_DEFS` với cùng id, cùng `PARK_WINTER_STYLE` (màu khăn, mũ của từng người, tay áo dài, quần tất). Cành trơ của cây anh đào là nhóm `wtr` trong mẫu công viên. `register.tsx` chỉ dùng các phần này vào mùa đông, đồng thời ẩn màu tán hoa.
 - Hình con mèo không nằm ở đây. Nó được tạo từ gói của Bow.Pixel bằng `running-cat/tools/make_cat_frames.py`, và **không được chia sẻ lại**.

@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import { CAT_FRAMES, CAT_H } from './cat-frames'
-import { CAT_X, CAT_Y, DAY, HORIZON, LAYERS, PARK_BACK, PARK_DEFS, PARK_FRONT, PARK_H, PARK_MID, PARK_STYLE, PARK_TOP, PARK_W, TRAIN_PERIOD, VISIT_COPIES, VISITORS, WALK_LOOP, WALK_PAD, WALKERS } from './park'
+import { CAT_X, CAT_Y, DAY, HORIZON, LAYERS, PARK_BACK, PARK_DEFS, PARK_FRONT, PARK_H, PARK_MID, PARK_STYLE, PARK_TOP, PARK_W, PARK_WINTER_DEFS, PARK_WINTER_STYLE, TRAIN_PERIOD, VISIT_COPIES, VISITORS, WALK_LOOP, WALK_PAD, WALKERS } from './park'
 import { makePark, visitOffset } from './cast'
 import type { Park } from './cast'
 import { SEASONS, WEATHERS, isWet, seasonAt, seasonEnd, seasonHour, weatherAt, weatherChanges } from './season'
@@ -473,6 +473,8 @@ function rainStarts(from: number, to: number): number[] {
 
 type Dash = { r: number; exit: number; end: number; s: number }
 
+const snap = (t: number): number => Math.round(t * 1000) / 1000
+
 // When each walker set off on each lap, as the redraws saw it: walker -> lap -> time. A lap's
 // set-off depends on how the path moved while they walked it, which a later redraw cannot work
 // out from where the path is now; so each redraw writes down the laps it plans, and the next one
@@ -496,15 +498,19 @@ function walkerPlan(w: (typeof WALKERS)[number], t0: number, ran0: number, go: G
       ? [...crossings(from, x(from), speedAt(from), LOOP).filter(c => c < moves),
          ...crossings(moves, x(moves), speedAt(moves), LOOP).filter(c => c < from + HORIZON)]
       : crossings(from, x(from), speedAt(from), LOOP)
+  // (to the millisecond: worked out from where they are, or from when they cross, a lap that sets
+  // off just as a shower starts must come out the same, in the rain or not, every redraw)
   const lapStart = (lap: number): number =>
-    dir > 0 ? (lap * LOOP + PATH_SPEED * ran0) / walk : -((lap + 1) * LOOP + PATH_SPEED * ran0) / walk
+    snap(dir > 0 ? (lap * LOOP + PATH_SPEED * ran0) / walk : -((lap + 1) * LOOP + PATH_SPEED * ran0) / walk)
   // A lap that begins after this redraw sets off when they come onto the path as it moves now;
   // the lap they are on keeps the time it had, so a redraw changes nothing in view.
-  const laps = lapEnds(t0)
+  const laps = lapEnds(t0).map(snap)
   // the lap they are on now: the time an earlier redraw had for it, if it had begun by now
   const seen = setOffs.get(w.i) ?? new Map<number, number>()
   setOffs.set(w.i, seen)
-  const lap0 = Math.floor(x(t0) / LOOP)
+  // (a hair on: on the very moment they start a lap they are on it, whichever way they go; at x(t0)
+  // itself a walker going left, just at a lap's end, counted as still on the lap before)
+  const lap0 = Math.floor(x(t0 + 0.01) / LOOP)
   const kept = seen.get(lap0)
   const start0 = kept !== undefined && kept <= t0 ? kept : lapStart(lap0)
   // write down the plan: this lap's start, and the ones to come (a later redraw may revise those)
@@ -724,6 +730,10 @@ const STILL_CSS = '@media (prefers-reduced-motion: reduce){.sfa,.sfb,.bza,.bzb,.
 // How far ahead a drawing plans the weather; past it the last weather holds till the next redraw.
 const WX_WINDOW = 600
 
+// Winter's templates, by id: everyone dressed for the cold, swapped in for their own.
+const WINTER_DEFS = new Map([...classed(PARK_WINTER_DEFS).matchAll(/<g id="(\w+)">(.*?)<\/g>/g)].map(m => [m[1]!, m[0]] as const))
+const TEMPLATE = /<g id="(\w+)">(?:<path[^>]*\/>)*<\/g>/g
+
 type Art = { back: string; front: string; defs: (defs: string) => string }
 const ARTS = new Map<string, Art>()
 
@@ -735,6 +745,7 @@ function lookAt(t: number) {
   for (const c of weatherChanges(t, t + WX_WINDOW, sky)) seen.add(weatherAt(c + 0.01, sky))
   const look = {
     season,
+    winter: season === 'winter',
     petals: season === 'spring',
     leaves: season === 'autumn',
     rain: seen.has('rain'),
@@ -765,6 +776,8 @@ function lookAt(t: number) {
       let out = markup
       if (!look.petals) out = out.replace(/<g id="pet">.*?<\/g>/, '')
       if (!look.rain) out = out.replace(/<pattern id="(?:rf|rn|spl)".*?<\/pattern>/g, '')
+      // the bare tree only in winter; and then everyone in their winter things
+      out = look.winter ? out.replace(TEMPLATE, (whole, id: string) => WINTER_DEFS.get(id) ?? whole) : out.replace(/<g class="wtr">.*?<\/g>/, '')
       return extra === '' ? out : out.replace(/<\/defs>$/, `${extra}</defs>`)
     }
     art = { back, front, defs }
@@ -849,9 +862,15 @@ export function seasonColours(t0: number): readonly string[] {
   return colours.map((c, k) => mixColour(c, next[k]!, 1 - left / TURN))
 }
 
+// The CROWN first colours are the cherry tree's crown: winter hides it, for the bare tree.
+const CROWN = 5
+
 function seasonStyle(t0: number): string {
   const colours = seasonColours(t0)
-  return SEASON_BASE.map((base, k) => (colours[k] === base ? '' : REPAINT[k]!.map(f => f.replace('%', colours[k]!)).join(''))).join('')
+  const winter = seasonAt(t0, sky) === 'winter'
+  const paint = (k: number): string => (winter && k < CROWN ? 'none' : colours[k]!)
+  return SEASON_BASE.map((base, k) => (paint(k) === base ? '' : REPAINT[k]!.map(f => f.replace('%', paint(k))).join(''))).join('') +
+    (winter ? PARK_WINTER_STYLE : '')
 }
 
 // The band's corners, rounded like the frame around it, in CSS pixels as drawn (not art pixels),
