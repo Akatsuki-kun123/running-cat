@@ -645,7 +645,8 @@ petals = []
 
 
 WHITE_DOTS = 28   # white blossoms dotted over the cherry tree
-WINTER_TREE = {}  # the bare tree's limbs, twigs and snow, drawn over the crown in winter (class wtr)
+WINTER_TREE = {}  # the bare tree's limbs and twigs, drawn over the crown in winter (class wtr)
+TREE_SNOW = {}    # the snow on them, which comes and goes with the snow lying elsewhere
 SNOW_ON = "#eef3fb"
 
 def cherry(tx):
@@ -778,7 +779,7 @@ def cherry(tx):
         if (x, y - 1) not in bare and free((x, y - 1)) and trnd.random() < 0.6:
             snow[(x, y - 1)] = SNOW_ON
     WINTER_TREE.update(bare)
-    WINTER_TREE.update(snow)
+    TREE_SNOW.update(snow)     # lying on the limbs like the rest: drawn with the snow (sg1, sg2)
     # a low ring of stones round the foot of the tree, seen from a little above: the back of the
     # ring behind the trunk, earth inside, the front kerb with its lit top and darker face
     rx, cy, ry = 13, 37, 2.5
@@ -1071,7 +1072,11 @@ for n in range(40):                      # a few specks blown onto the path's ba
     xy = (_snrd.randrange(PARK_P), _snrd.choice([GROUND + 2, GROUND + 2, GROUND + 3]))
     (SNOW_DUST if n < 12 else SNOW_DEEP)[xy] = SNOW_ON
 _caps_svg = paths({xy: SNOW_ON for xy in SNOW_CAPS}).replace('" d="', '" id="scp" d="', 1)
-SNOW_SVG = (f'<g class="sg1">{_caps_svg}{paths(SNOW_DUST)}</g><g class="sg2"><use href="#scp"/>{paths(SNOW_DEEP)}</g>')
+# the snow on the tree's limbs: every other flake with the first dusting, the rest once it lies deep
+_limbs = sorted(TREE_SNOW)
+_limbs1 = {xy: TREE_SNOW[xy] for xy in _limbs[0::2]}
+_limbs2 = {xy: TREE_SNOW[xy] for xy in _limbs[1::2]}
+SNOW_SVG = (f'<g class="sg1">{_caps_svg}{paths({**SNOW_DUST, **_limbs1})}</g><g class="sg2"><use href="#scp"/>{paths({**SNOW_DEEP, **_limbs2})}</g>')
 WINTER_PAINT = [(LEAF, "#1c3a2c", ""), (LEAF_HI, "#2a5038", ""), (LEAF_DK, "#132a22", ""), (WATER, "#a8d4e8", "")]
 
 

@@ -1,6 +1,6 @@
 {
   "name": "running-cat",
-  "version": "0.44.0",
+  "version": "0.44.3",
   "description": "A pixel cat in a scrolling Neon Tokyo night park above the chat box: the park moves while Claude works and stops when the cat does; people stroll by, sit on the benches, and vending machines glow along the path.",
   "types": "./types/index.d.ts"
 }

@@ -702,13 +702,15 @@ const BASE_STYLE = PARK_STYLE
 const SOLAR = /@keyframes (?:moon|sun|dsky|dusk|dlt|nl|ffy)\{(?:[\d.]+%\{[^}]*\})*\}/g
 const SUN_STYLES = new Map<string, string>()
 function sunStyle(t0: number): string {
-  const [rise, set] = sunHours(t0, sky).map(h => Math.round(h * 20) / 20) as [number, number]
+  // (to a hundredth of an hour: the sun's day lengthens or shortens by at most that between two
+  // redraws, so a redraw moves the sun and moon by well under a pixel)
+  const [rise, set] = sunHours(t0, sky).map(h => Math.round(h * 100) / 100) as [number, number]
   const key = `${rise},${set}`
   let style = SUN_STYLES.get(key)
   if (style === undefined) {
     style = BASE_STYLE.replace(SOLAR, frames =>
       frames.replace(/([\d.]+)%\{/g, (_, pct: string) => `${+((solarHour((Number(pct) / 100) * 24, rise, set) / 24) * 100).toFixed(3)}%{`))
-    if (SUN_STYLES.size > 50) SUN_STYLES.clear()
+    if (SUN_STYLES.size > 20) SUN_STYLES.clear()
     SUN_STYLES.set(key, style)
   }
   return style
@@ -742,7 +744,9 @@ const BLIZZARD_FRONT =
   '<g class="hvy"><g class="sfc"><rect class="sw" x="-38" y="-88" width="1030" height="132" fill="url(#sn)"/></g></g><g class="bzw"><rect y="-12" width="960" height="56" fill="#cdd5e4" opacity=".22"/>' +
   '<g class="bza"><rect y="-88" width="1020" height="132" fill="url(#sn)"/></g><g class="bzb"><rect y="-88" width="1008" height="132" fill="url(#sf)"/></g></g>'
 const LEAF_FRONT = '<g class="lfa"><rect y="-88" width="1120" height="132" fill="url(#lf)"/></g>'
-const SNOW_CSS = '@keyframes sfa{to{transform:translateY(44px)}}@keyframes sw{to{transform:translateX(4px)}}.sw{animation:sw 3s ease-in-out infinite alternate}.sfb{opacity:.6}'
+const SNOW_CSS = '@keyframes sfa{to{transform:translateY(44px)}}@keyframes sw{to{transform:translateX(4px)}}.sfb{opacity:.6}'
+// The snow's sway, to and fro over 6 s, on the wall clock like the rest, so a redraw carries it on.
+const swayOn = (t0: number): string => `.sw{animation:sw 3s ease-in-out -${wrap(t0, 6).toFixed(2)}s infinite alternate}`
 const BLIZZARD_CSS = '@keyframes bza{to{transform:translate(-60px,44px)}}@keyframes bzb{to{transform:translate(-48px,44px)}}'
 const LEAF_CSS = '@keyframes lfa{to{transform:translate(-160px,44px)}}'
 const STILL_CSS = '@media (prefers-reduced-motion: reduce){.sfa,.sfb,.sfc,.bza,.bzb,.lfa,.sw{animation:none}}'
@@ -863,9 +867,13 @@ function blizzardAt(t: number, [early, full]: readonly [number, number]): number
   return Math.max(0, ...blizzards(t).map(([a, b]) => Math.min(clamp((t - a + early) / (early + full)), clamp((b + early - t) / (early + full)))))
 }
 
-// The times in the drawing's window where that strength turns: it is straight between them.
+// The times in the drawing's window where that strength turns: it is straight between them. The
+// blizzards looked for reach back before the window as well as across it: one that ended just
+// before it still has its tail to ease off inside it (missed, the haze faded over the whole
+// window instead, and dropped away at the next redraw).
 function blizzardMarks(t0: number, [early, full]: readonly [number, number]): number[] {
-  return blizzards(t0 + WX_WINDOW / 2).flatMap(([a, b]) => [a - early, a + full, b - full, b + early]).filter(m => m > t0 && m < t0 + WX_WINDOW)
+  const marks = [t0, t0 + WX_WINDOW].flatMap(t => blizzards(t)).flatMap(([a, b]) => [a - early, a + full, b - full, b + early])
+  return [...new Set(marks)].filter(m => m > t0 && m < t0 + WX_WINDOW)
 }
 
 // A layer's opacity as strong as the blizzard, over the drawing's window.
@@ -885,7 +893,7 @@ function weatherStyle(t0: number): string {
   let css = level('rcl', t0, w => shade[w], 60, t => 0.35 * blizzardAt(t, BLIZZARD), blizzardMarks(t0, BLIZZARD))
   if (look.rain) css += level('rain', t0, w => (w === 'rain' ? 1 : 0), 15)
   if (look.snow) {
-    css += level('snw', t0, w => (w === 'snow' || w === 'blizzard' ? 1 : 0), 20) + SNOW_CSS +
+    css += level('snw', t0, w => (w === 'snow' || w === 'blizzard' ? 1 : 0), 20) + SNOW_CSS + swayOn(t0) +
       loopOn('sfa', 'sfa', 7, 44, t0) + loopOn('sfb', 'sfa', 11, 44, t0)
   }
   if (look.blizzard) {
@@ -983,8 +991,10 @@ const CORNER = 'svg{clip-path:inset(0 round 10px)}'
 // The park's tiles glide by in fractions of a pixel; the people and petals drawn over them go
 // the same way (not snapped pixel by pixel), so nobody judders against the path or the frame.
 // Only while it moves: smoothed, a person's pixels part a little where two colours meet, and
-// the scene behind shows through (an eye, say), so a still park is drawn sharp.
-const GLIDE = '.lp,.w{shape-rendering:geometricPrecision}'
+// the scene behind shows through (an eye, say), so a still park is drawn sharp. The petals fall
+// smoothly then too, not a pixel at a time: stepped while the park glides under them, they jerk.
+// (.pt.pt: over the park's own stepped .pt, which comes after; no ancestor, as they are in a <use>.)
+const GLIDE = '.lp,.w{shape-rendering:geometricPrecision}.pt.pt{animation-timing-function:linear}'
 
 // The style block written short, to keep the band under the Svg size limit: `step-end` for the
 // one-step timing it is the name of, and numbers without the zeros that change nothing

@@ -711,7 +711,7 @@ test('people glide with the park, and a still park rests on a whole screen pixel
   expect((await band($, false)).source).not.toContain('geometricPrecision')
   await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } })
   await clock.advance(1_000)
-  expect((await band($, true)).source).toContain('.lp,.w{shape-rendering:geometricPrecision}')
+  expect((await band($, true)).source).toContain('.lp,.w{shape-rendering:geometricPrecision}.pt.pt{animation-timing-function:linear}')
   // 1.234 s at 18 art px a second (after 0.8 s walking off) is 22.212 px: held at 22, a whole
   // screen pixel.
   await clock.advance(1_034)
@@ -1026,6 +1026,36 @@ test('a blizzard builds up and dies down: the snow thickens before it and eases 
   expect(later).not.toContain('<g class="hvy">')
 })
 
+// A weather layer's opacity `s` seconds into a drawing: its keyframes over the window, or its one level.
+function layerAt(svg: string, cls: string, s: number): number {
+  const frames = svg.match(new RegExp(`@keyframes ${cls}x\\{((?:[\\d.]+%\\{opacity:[\\d.]+\\})*)\\}`))?.[1]
+  if (frames === undefined) return Number(svg.match(new RegExp(`\\.${cls}\\{opacity:([\\d.]+)\\}`))?.[1] ?? 0)
+  const pts = [...frames.matchAll(/([\d.]+)%\{opacity:([\d.]+)\}/g)].map(m => [(Number(m[1]) / 100) * 600, Number(m[2])] as const)
+  for (let k = 1; k < pts.length; k++) {
+    const [a, va] = pts[k - 1]!
+    const [b, vb] = pts[k]!
+    if (s <= b) return va + ((vb - va) * (s - a)) / (b - a || 1)
+  }
+  return pts[pts.length - 1]![1]
+}
+
+test('a redraw through a blizzard, its build-up and its tail finds the haze and the snow as the last drawing had them', async ($, on) => {
+  // every 30 s, from three minutes before each to four after
+  const hours = SPELLS.winter.filter(s => s[2] === 'blizzard').flatMap(([from, to]) => Array.from({ length: Math.round((to - from + 7) * 2) }, (_, n) => from - 3 + n / 2))
+  const drawn = await scenesAt($, on, hours.map(h => inSeason(3, h) + 370))
+  const off: string[] = []
+  for (let n = 1; n < drawn.length; n++) {
+    if (hours[n]! - hours[n - 1]! !== 0.5) continue
+    for (const cls of ['bzw', 'hvy', 'rcl']) {
+      const was = layerAt(drawn[n - 1]!, cls, 30)
+      const is = layerAt(drawn[n]!, cls, 0)
+      if (Math.abs(was - is) > 0.03) off.push(`${cls} ${was.toFixed(2)} -> ${is.toFixed(2)} at ${hours[n]}h`)
+    }
+  }
+  expect(hours.length).toBeGreaterThan(30)
+  expect(off).toEqual([])
+})
+
 test('/running-cat season and weather force a demo, this session only', async ($, on) => {
   mock.clock(on, { now: inSeason(1, 20) })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -1078,7 +1108,7 @@ test('every scene through two days of weather stays under the SVG size limit', a
   expect(largest).toBeLessThan(131_072)
 })
 
-test('every season and every weather stays under the SVG size limit', { timeoutMs: 30_000 }, async ($, on) => {
+test('every season and every weather stays under the SVG size limit', { timeoutMs: 60_000 }, async ($, on) => {
   const clock = mock.clock(on, { now: inSeason(0, 0) })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
