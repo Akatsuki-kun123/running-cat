@@ -1158,7 +1158,44 @@ def template_markup(tid, pixels, track=True):
             if track:
                 CLS_USED.add(ch)
             pix[k] = "@" + pcode(ch)
-    return f'<g id="{tid}">' + re.sub(r'stroke="@(\w+)"', r'class="c\1"', paths(pix)) + "</g>"
+    under = underpaint(pix)
+    return f'<g id="{tid}">' + re.sub(r'stroke="@(\w+)"', r'class="c\1"', under + paths(pix)) + "</g>"
+
+
+# Colours every person has, laid under a row of several first; else the row's commonest colour,
+# never one a season may leave out (autumn's scarf ends are no colour for those without a scarf).
+UNDER = ["S", "H", "B"]
+NOT_UNDER = {"@v2"}
+
+
+def underpaint(pix):
+    """Each unbroken row of several colours laid first in one of them end to end, and those pixels
+    left out of the rest: while the band glides the runs' edges blur, and the background no longer
+    shows through between them, as it did round the eyes. Takes them out of `pix`."""
+    under = ["@" + pcode(ch) for ch in UNDER]
+    runs = {}
+    rows = {}
+    for (x, y) in pix:
+        rows.setdefault(y, []).append(x)
+    for y in sorted(rows):
+        xs = sorted(rows[y])
+        i = 0
+        while i < len(xs):
+            j = i
+            while j + 1 < len(xs) and xs[j + 1] == xs[j] + 1:
+                j += 1
+            seg = xs[i:j + 1]
+            colours = {pix[(x, y)] for x in seg}
+            row = [pix[(x, y)] for x in seg]
+            fits = sorted(colours - NOT_UNDER, key=lambda c: (-row.count(c), c))
+            base = next((c for c in under if c in colours), fits[0] if fits else None)
+            if len(colours) > 1 and base is not None:
+                runs.setdefault(base, []).append((seg[0], y, len(seg)))
+                for x in seg:
+                    if pix[(x, y)] == base:
+                        del pix[(x, y)]
+            i = j + 1
+    return "".join(f'<path stroke="{c}" d="{runs_d(r)}"/>' for c, r in runs.items())
 
 
 def template_defs():

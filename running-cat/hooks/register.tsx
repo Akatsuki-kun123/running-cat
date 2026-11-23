@@ -18,7 +18,7 @@ const CAT_LEFT = CAT_X + 8
 
 // ---------- colours by name ----------
 
-// Every colour drawn more than once gets a short class, the same in every scene: `class="k3"` in
+// Every colour drawn more than once gets a short class, the same in every scene: `class="z3"` in
 // place of `stroke="#222034"` on each run, to keep the band under the Svg size limit.
 const PAINT = /<path (stroke="|style="fill:)(#[0-9a-f]{6})"/g
 const PAINT_CLASS = (() => {
@@ -30,7 +30,7 @@ const PAINT_CLASS = (() => {
   }
   const names = new Map<string, string>()
   for (const [key] of [...counts].filter(([, n]) => n > 2).sort((a, b) => b[1] - a[1])) {
-    names.set(key, `k${names.size.toString(36)}`)
+    names.set(key, `z${names.size.toString(36)}`)
   }
   return names
 })()

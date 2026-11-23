@@ -952,8 +952,8 @@ test('winter: snow lies on things, building up as it snows and melting slowly be
   expect(winter).toContain('.wsc{display:inline}')
   expect(winter).toContain('.cJ{stroke:color-mix(in srgb,var(--J) 80%,#000)}')
   expect(autumn).not.toContain('color-mix')
-  expect(winter).toMatch(/\.w7 (\.k\w+|\[stroke="#2fb59a"\])\{stroke:#26917b\}/)
-  expect(winter).toMatch(/(\.k\w+|\[stroke="#36b8e3"\])\{stroke:#a8d4e8\}/)
+  expect(winter).toMatch(/\.w7 (\.z\w+|\[stroke="#2fb59a"\])\{stroke:#26917b\}/)
+  expect(winter).toMatch(/(\.z\w+|\[stroke="#36b8e3"\])\{stroke:#a8d4e8\}/)
 })
 
 test('winter snows: flakes falling through the park, and people still come out in light snow', async ($, on) => {
@@ -1124,6 +1124,23 @@ test('every season and every weather stays under the SVG size limit', { timeoutM
     }
   }
   expect(largest).toBeLessThan(131_072)
+})
+
+test('a colour\'s short class is only a colour: no other rule shows, hides or fades it (the eyes stay)', async ($, on) => {
+  const scenes = await scenesAt($, on, [0, 1, 2, 3].flatMap(k => [inSeason(k, 10), inSeason(k, 21)]))
+  for (const svg of scenes) {
+    const style = svg.match(/<style>(.*?)<\/style>/s)![1]!
+    const named = new Set([...svg.matchAll(/class="(z\w+)"/g)].map(m => m[1]!))
+    expect(named.size).toBeGreaterThan(10)
+    for (const [, selector, body] of style.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+      const own = [...selector!.matchAll(/\.(z\w+)(?![\w-])/g)].map(m => m[1]!).filter(n => named.has(n))
+      if (own.length > 0) expect([selector, body!.replace(/^(stroke|fill):[^;]*$/, 'colour')]).toEqual([selector, 'colour'])
+    }
+    // the eyes are drawn, in their own dark colour
+    const eye = svg.match(/<path class="(z\w+)" d="M6 3\.5h1m1 0h1"\/>/)
+    expect(eye?.[1]).toBeDefined()
+    expect(style).toContain(`.${eye![1]}{stroke:#1a1220}`)
+  }
 })
 
 test('everyone is drawn from shared parts, each person in their own colours', async ($, on) => {
