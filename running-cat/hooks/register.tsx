@@ -739,7 +739,7 @@ type Art = { back: string; front: string; defs: (defs: string) => string }
 const ARTS = new Map<string, Art>()
 
 // What the park looks like from `t`: its season, the weathers due in the window, and the art for
-// them. Petals fall only in spring, leaves only in autumn; rain and snow are drawn only when due.
+// them. Petals fall only in spring, fireflies come out only in summer, leaves only in autumn; rain and snow are drawn only when due.
 function lookAt(t: number) {
   const season = seasonAt(t, sky)
   const seen = new Set<Weather>([weatherAt(t - 60, sky), weatherAt(t, sky)])
@@ -748,6 +748,7 @@ function lookAt(t: number) {
     season,
     winter: season === 'winter',
     petals: season === 'spring',
+    fireflies: season === 'summer',
     leaves: season === 'autumn',
     rain: seen.has('rain'),
     snow: seen.has('snow') || seen.has('blizzard'),
@@ -760,6 +761,7 @@ function lookAt(t: number) {
     let front = ART_FRONT
     let extra = ''
     if (!look.petals) front = cutGroups(front, '<g class="lp"><use href="#pet"')
+    if (!look.fireflies) back = cutGroups(back, '<g class="ffy dn">')
     if (!look.rain) {
       back = cutGroups(back, '<g class="rain wx">')
       front = cutGroups(front, '<g class="rain wx">')
@@ -776,6 +778,7 @@ function lookAt(t: number) {
     const defs = (markup: string): string => {
       let out = markup
       if (!look.petals) out = out.replace(/<g id="pet">.*?<\/g>/, '')
+      if (!look.fireflies) out = cutGroups(out, '<g id="ffl">')
       if (!look.rain) out = out.replace(/<pattern id="(?:rf|rn|spl)".*?<\/pattern>/g, '')
       // the bare tree, the snow lying and the beds and fountain asleep only in winter; and then
       // everyone in their winter things
@@ -866,6 +869,8 @@ function weatherStyle(t0: number): string {
       loopOn('bza', 'bza', 1.4, 44, t0) + loopOn('bzb', 'bzb', 2, 44, t0) + loopOn('sfc', 'sfa', 5, 44, t0)
   }
   if (look.leaves) css += LEAF_CSS + loopOn('lfa', 'lfa', 9, 88, t0)
+  // the fireflies keep in out of the rain, and come out again after it
+  if (look.fireflies) css += level('ffr', t0, w => (w === 'clear' ? 1 : 0), 30)
   if (look.snow || look.leaves) css += STILL_CSS
   return css
 }
@@ -983,10 +988,19 @@ function scene(move: readonly Step[], moveMs: number, ranMs: number, go: Go, now
     `<style>${style}</style>` +
     `${look.defs(defsFor(shown))}${look.back}${ART_MID}${cat.svg}${look.front}</svg>`
   const source = draw(shownLast)
-  // Past the app's limit the band would not be drawn at all: an empty park beats no park.
-  return source.length <= SVG_LIMIT ? source : draw(new Map())
+  // Past the app's limit the band would not be drawn at all: first the fireflies and the falling
+  // petals go (only there to look at), then if need be the visitors: an empty park beats no park.
+  if (source.length <= SVG_LIMIT) return source
+  const plain = withoutExtras(source)
+  return plain.length <= SVG_LIMIT ? plain : withoutExtras(draw(new Map()))
 }
 const SVG_LIMIT = 131_072
+
+// A drawing without its fireflies and falling petals.
+function withoutExtras(svg: string): string {
+  for (const open of ['<g class="ffy dn">', '<g id="ffl">', '<g class="lp"><use href="#pet"', '<g id="pet">']) svg = cutGroups(svg, open)
+  return svg
+}
 
 // The band last drawn, and what it was drawn from. Every redraw is drawn from now: the app starts a
 // drawing's animations over each time it puts the band up, even the very same text, so a drawing

@@ -1075,6 +1075,38 @@ SNOW_SVG = (f'<g class="sg1">{_caps_svg}{paths(SNOW_DUST)}</g><g class="sg2"><us
 WINTER_PAINT = [(LEAF, "#1c3a2c", ""), (LEAF_HI, "#2a5038", ""), (LEAF_DK, "#132a22", ""), (WATER, "#a8d4e8", "")]
 
 
+# ---------- summer nights: fireflies ----------
+# A few fireflies over the hedge, the flower beds, round the cherry tree and the fountain, most of
+# them low: each a dot with a faint glow, blinking at its own pace and drifting a few pixels to
+# and fro. One set per park tile (class ffl, used once per tile like the petals); register.tsx
+# draws them only in summer, and lets them out at night (ffy, on the day's clock) and not in rain.
+FF_CORE, FF_GLOW = "#f4ff9a", "#c8f050"
+_frnd = random.Random(53)
+_busy = [(GATE_X - 3, GATE_X + GATE_W + 3), (160, 200), (276, 300), (424, 464), (WC_X - 4, WC_X + 42)]
+_spots = ([(lambda: (_frnd.randrange(PARK_P), _frnd.randrange(29, 35)))] * 6
+          + [(lambda bx=bx, bw=bw: (_frnd.randrange(bx, bx + bw + 4), _frnd.randrange(24, 31))) for bx, bw in ((143, 14), (247, 26), (412, 11), (567, 20))]
+          + [(lambda: (_frnd.randrange(208, 256), _frnd.randrange(6, 28)))] * 4
+          + [(lambda: (_frnd.randrange(FOUNTAIN_X - 14, FOUNTAIN_X + 15), _frnd.randrange(16, 30)))] * 2)
+FIREFLIES = []
+for n, spot in enumerate(_spots):
+    while True:
+        fx, fy = spot()
+        if not any(a <= fx <= b for a, b in _busy):
+            break
+    FIREFLIES.append((fx, fy, n % 4))
+# one firefly drawn once (fg), used at each place; four paces of blinking and drifting, taken in turn
+FF_PACES = [(3.1, 8.3, 0.4), (4.4, 11.6, 2.9), (2.7, 9.7, 5.3), (3.8, 12.9, 7.6)]
+FIREFLY_DEF = f'<g id="fg"><rect x="-1" y="-1" width="3" height="3" fill="{FF_GLOW}" opacity=".3"/><rect width="1" height="1" fill="{FF_CORE}"/></g>'
+FIREFLY_SVG = ("".join(f'<use class="ff fp{k}" href="#fg" x="{fx}" y="{fy}"/>' for fx, fy, k in FIREFLIES))
+FIREFLY_STYLE = (
+    ".ff{animation:ffb 3s linear infinite,ffd 9s ease-in-out infinite alternate}"
+    + "".join(f".fp{k}{{animation-duration:{b}s,{d}s;animation-delay:-{dl}s}}" for k, (b, d, dl) in enumerate(FF_PACES))
+    + "@keyframes ffb{0%{opacity:0}15%{opacity:1}35%{opacity:1}55%{opacity:0}100%{opacity:0}}"
+    "@keyframes ffd{0%{translate:0 0}25%{translate:2px -2px}50%{translate:4px 0}75%{translate:1px -3px}100%{translate:-2px -1px}}"
+    ".ffy{opacity:0;animation-name:ffy}" + keyframes("ffy", [(0, "opacity:1"), (1, "opacity:.6"), (2, "opacity:0"), (19.5, "opacity:0"), (21, "opacity:1"), (24, "opacity:1")])
+)
+
+
 # ---------- people ----------
 # Rain gear: person(i, rain=True) adds an umbrella, these two their own, the rest one of UMBRELLAS.
 WALKERS_N = 6   # the first six outfits walk the path
@@ -1745,7 +1777,7 @@ for _part in _parts:
     if _m:
         _part = f'<g class="h{_m.group(1)}">{_part}</g>'
     visitor_svg += _part
-defs += f'{WALK_DEFS}<g id="vis">{visitor_svg}{VIS_FRONT}</g><g id="pet">{petal_svg}</g>{TRAIN_DEF}{RAIN_DEFS}{template_defs()}</defs>'
+defs += f'{WALK_DEFS}<g id="vis">{visitor_svg}{VIS_FRONT}</g><g id="pet">{petal_svg}</g>{FIREFLY_DEF}<g id="ffl">{FIREFLY_SVG}</g>{TRAIN_DEF}{RAIN_DEFS}{template_defs()}</defs>'
 WINTER_TPL = winter_defs()
 # winter's own colours: the scarf and hat (each person's, below), long sleeves in the jacket's
 # shade, and dark tights
@@ -1778,6 +1810,7 @@ BACK = (
     + f'<g class="lp"><rect y="-{TOP}" width="{W + PARK_P}" height="{H + TOP}" fill="url(#park)"/>'
     + f'<rect class="dlt dn" y="-{TOP}" width="{W + PARK_P}" height="{H + TOP}" fill="#56688f"/>'
     + f'<g class="rain wx"><rect width="{W + PARK_P}" height="{H}" fill="url(#spl)"/></g>'   # splashes on the path
+    + '<g class="ffy dn"><g class="ffr">' + "".join(f'<use href="#ffl" x="{k * PARK_P}"/>' for k in range(math.ceil((W + PARK_P) / PARK_P))) + "</g></g>"
 )
 # Bench visitors ride with the park, one copy per tile; the park group closes after them.
 visitors_all = "".join(f'<use class="u{k + 1}" href="#vis" x="{k * PARK_P}"/>' for k in VISIT_COPIES)
@@ -1823,8 +1856,8 @@ STYLE = (
     ".tlit{animation:hum 6s steps(6,end) infinite alternate}"
     ".vlit{animation:vlit 7s steps(7,end) infinite}@keyframes vlit{0%{transform:translateY(0);opacity:0}10%{opacity:1}70%{transform:translateY(12px);opacity:1}71%{opacity:0}}"
     ".vs{opacity:var(--s,0)}.wsc{display:none}.sg1{stroke-dasharray:2 1 1 2}"
-    + VISIT_CSS + CAST_CSS +
-    "@media (prefers-reduced-motion: reduce){.pt{animation:none;opacity:0}.tw0,.tw1,.tw2,.beacon,.win,.neon2,.lampglow,.lamp,.fw0,.fw1,.fw2,.rail,.pa,.pb,.w,.vlit,.v,.vw,.vs,.talk0,.talk1,.talk0r,.talk1r,.blink,.tlit,.rfa,.rna,.sp0,.sp1,.sp2{animation:none}.v,.v .vw,.v .vs,.ta,.tb,.tm,.tf,.dh,.do,.ds{animation:none!important}.v{--s:1}.pb,.vlit,.vw,.fw1,.fw2,.tr,.trb{opacity:0}.tr,.trb{animation:none}.vs{opacity:1}}"
+    + VISIT_CSS + CAST_CSS + FIREFLY_STYLE +
+    "@media (prefers-reduced-motion: reduce){.pt{animation:none;opacity:0}.tw0,.tw1,.tw2,.beacon,.win,.neon2,.lampglow,.lamp,.fw0,.fw1,.fw2,.rail,.pa,.pb,.w,.vlit,.v,.vw,.vs,.talk0,.talk1,.talk0r,.talk1r,.blink,.tlit,.rfa,.rna,.sp0,.sp1,.sp2,.ff{animation:none}.v,.v .vw,.v .vs,.ta,.tb,.tm,.tf,.dh,.do,.ds{animation:none!important}.v{--s:1}.pb,.vlit,.vw,.fw1,.fw2,.tr,.trb{opacity:0}.tr,.trb{animation:none}.vs{opacity:1}}"
 )
 
 def hours_ts(h):
@@ -1854,7 +1887,7 @@ def short_ids(texts, extra=()):
 # Each ambient loop keeps its own offset in --d, and the band adds the wall clock, --t, which
 # register.tsx writes at each redraw: so a redraw carries every loop on from where it was.
 AMBIENT = (".tw0,.tw1,.tw2,.beacon,.win,.neon2,.lampglow,.lamp,.fw0,.fw1,.fw2,.rail,.pt,.pa,.pb,"
-           ".talk0,.talk1,.talk0r,.talk1r,.blink,.tlit,.vlit,.rfa,.rna,.sp0,.sp1,.sp2")
+           ".talk0,.talk1,.talk0r,.talk1r,.blink,.tlit,.vlit,.rfa,.rna,.sp0,.sp1,.sp2,.ff,.fp0,.fp1,.fp2,.fp3")
 STYLE = re.sub(r"animation-delay:(-[\d.]+s)", r"--d:\g<1>", STYLE) + AMBIENT + "{animation-delay:calc(var(--d,0s) - var(--t,0s))}"
 defs = re.sub(r"animation-delay:(-[\d.]+s)", r"--d:\g<1>", defs)
 STYLE, defs, BACK, MID, FRONT, WINTER_TPL = short_ids([STYLE, defs, BACK, MID, FRONT], [WINTER_TPL])

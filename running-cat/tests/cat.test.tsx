@@ -897,6 +897,27 @@ test('whoever sits on a bench is drawn before anyone walking: passers-by go in f
   expect(order.slice(0, sits.length).sort()).toEqual([...sits].sort())
 })
 
+test('summer nights: fireflies over the hedge and the beds, out at night and not in the rain', async ($, on) => {
+  // 10 p.m. in summer (hour 18 of the season) and in spring; a summer shower (hour 34.5)
+  const [spring, summer, shower] = await scenesAt($, on, [inSeason(0, 18), inSeason(1, 18), inSeason(1, 34.5)])
+  expect(summer).toContain('<g class="ffy dn"><g class="ffr"><use href="#ffl"')
+  // one firefly drawn once, used at each of 16 places, at one of four paces
+  expect(summer).toContain('<g id="fg"><rect x="-1" y="-1" width="3" height="3" fill="#c8f050" opacity=".3"/>')
+  expect(summer).toMatch(/<g id="ffl">(<use class="ff fp[0-3]" href="#fg" x="\d+" y="\d+"\/>){16}<\/g>/)
+  expect(summer).toMatch(/\.fp0\{animation-duration:[\d.]+s,[\d.]+s;--d:-[\d.]+s\}/)
+  // on the day's clock: none by day, they come out from half past seven, gone by two
+  expect(summer).toMatch(/@keyframes ffy\{0%\{opacity:1\}.*?8\.333%\{opacity:0\}81\.25%\{opacity:0\}87\.5%\{opacity:1\}/)
+  // blinking and drifting on the wall clock, so a redraw carries them on
+  expect(summer).toMatch(/,\.ff,\.fp0,\.fp1,\.fp2,\.fp3\{animation-delay:calc\(var\(--d,0s\) - var\(--t,0s\)\)\}/)
+  expect(startsAt(summer, 'ffr')).toBe('1')
+  for (const other of [spring]) {
+    expect(other).not.toContain('class="ffy')
+    expect(other).not.toContain('<g id="ffl">')
+  }
+  expect(weatherAt(inSeason(1, 34.5) / 1000)).toBe('rain')
+  expect(startsAt(shower, 'ffr')).toBe('0')
+})
+
 test('a blizzard: thick slanting snow and a white haze', async ($, on) => {
   // well into it, past its build-up
   const [from] = SPELLS.winter.find(s => s[2] === 'blizzard')!
