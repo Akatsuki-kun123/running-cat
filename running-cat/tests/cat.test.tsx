@@ -329,19 +329,38 @@ test('a band still held on the run a moment after the task ends still sees the j
   expect(source).toContain(classed(CAT_FRAMES.stop[0]))
 })
 
-test('a band out of sight at its half-minute tick is drawn afresh once seen, so it never shows a stale clock', async ($, on) => {
+test('a band in view is not redrawn by the half-minute check till its drawing is two minutes old', async ($, on) => {
+  const clock = mock.clock(on, { now: AT_2AM })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await clock.advance(25_000)   // lying down by now: nothing of its own to redraw
+  const ui = await $.ui.mount(BAND)
+  const drawn = async (): Promise<string> => ((await ui.find({ type: 'Svg' })) as Drawn)?.props?.source ?? ''
+  const first = await drawn()
+  // each redraw costs a stall and a jump: the checks at 30, 60 and 90 s leave it be
+  await clock.advance(65_000)
+  expect(await drawn()).toBe(first)
+  // the next one, the drawing past STALE_MS less a check, draws it afresh, the day's clock read anew
+  await clock.advance(30_000)
+  const after = await drawn()
+  expect(after).not.toBe(first)
+  const delay = (svg: string): number => Number(/\.dn\{animation-delay:-([\d.]+)s\}/.exec(svg)?.[1])
+  expect(delay(after) - delay(first)).toBeGreaterThan(90)
+  await ui.unmount()
+})
+
+test('a band out of sight is drawn afresh once seen, so it never shows a stale clock', async ($, on) => {
   const clock = mock.clock(on, { now: AT_2AM })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   await clock.advance(1_000)
   const before = (await band($, false)).source
-  // the tick lands at 30 s with nobody looking; the band is seen again two seconds later
-  await clock.advance(31_000)
+  // ten minutes with nobody looking; then seen again
+  await clock.advance(600_000)
   const after = (await band($, false)).source
   expect(after).not.toBe(before)
-  // the day's clock read afresh: half a minute on
   const delay = (svg: string): number => Number(/\.dn\{animation-delay:-([\d.]+)s\}/.exec(svg)?.[1])
-  expect(delay(after) - delay(before)).toBeGreaterThan(29)
+  expect(delay(after ?? '') - delay(before ?? '')).toBeGreaterThan(599)
 })
 
 test('every redraw is drawn from now: the app starts a drawing over each time it puts it up', async ($, on) => {
@@ -443,8 +462,13 @@ test('everyone comes out of a gate and goes back in at one, so nobody pops in or
 
   const source = (await band($, false)).source ?? ''
   // One group of visitors, a tile apart, from one tile before the scene: a visit keeps to its tile.
-  expect(source.match(/<use class="u\d" href="#vis"/g)?.length).toBe(4)
-  expect(source).toContain('<use class="u0" href="#vis" x="-640"/>')
+  // Drawn out in full where the size allows (a <use> of #vis is slow to play), else <use>s of #vis.
+  // A still park leaves out the copies wholly off the scene: at 0 the one a tile past its right edge.
+  expect(source.match(/<use class="u\d" href="#vis"|<g class="u\d" transform="translate\(-?\d+,0\)">/g)?.length).toBe(3)
+  expect(source).toMatch(/<use class="u0" href="#vis" x="-640"\/>|<g class="u0" transform="translate\(-640,0\)">/)
+  expect(source).not.toMatch(/class="u3"/)
+  // here, all three drawn out
+  expect(source).not.toContain('href="#vis"')
   // Every walk on a stage starts and ends in a gate (x 92 of each tile): up its stairs at the path's
   // back edge in the opening, a step straight down onto the path and out to the stop; back the
   // same way into the opening, a step straight up to the edge, down the stairs. Never along the
@@ -474,7 +498,7 @@ test('everyone comes out of a gate and goes back in at one, so nobody pops in or
   expect(source).not.toContain('fill="url(#park)"/><rect class="dlt dn" x="85"')
   expect(walks).toBeGreaterThanOrEqual(10)
   // Each walk has its back pose, shown while turned to the gate (or a door).
-  expect(source).toMatch(/<g id="wk2" class="pp2"><g class="wks">.*?<\/g><g class="bkp">/)
+  expect(source).toMatch(/<g id="wk2" class="pp2"><g class="wks wb">.*?<\/g><g class="bkp">/)
   expect(source).toContain('.wks{opacity:calc(1 - var(--bk,0))}')
   expect(source).toContain('.bkp{opacity:var(--bk,0)}')
 })
@@ -484,7 +508,10 @@ for (const when of [0, 1, 2]) test(`a drawing carries only the visitors its plan
     const source = await sceneAt($, on, [AT_NOON, AT_2AM, AT_NOON + 7_777_000][when]!)
     // (the petals' defs follow the visitors' in spring; out of it, the rest of the defs)
     const pet = source.indexOf('<g id="pet">')
-    const vis = source.slice(source.indexOf('<g id="vis">'), pet >= 0 ? pet : source.indexOf('</defs>'))
+    // the visitors as drawn: in #vis, or drawn out in the park's first copy
+    const vis = source.includes('href="#vis"')
+      ? source.slice(source.indexOf('<g id="vis">'), pet >= 0 ? pet : source.indexOf('</defs>'))
+      : source.slice(source.indexOf('<g class="u1" transform="translate(0,0)">'), source.indexOf('<g class="u2" transform='))
     let people = 0
     for (const { i } of VISITORS) {
       // who the plan puts on stage i, in any copy
@@ -951,7 +978,7 @@ test('winter: snow lies on things, building up as it snows and melting slowly be
   expect(winter.length).toBeLessThan(autumn.length - 2000)
   expect(winter).toContain('.wsc{display:inline}')
   expect(winter).toContain('.cJ{stroke:color-mix(in srgb,var(--J) 80%,#000)}')
-  expect(autumn).not.toContain('color-mix')
+  expect(autumn).not.toContain(' 80%,#000)')
   expect(winter).toMatch(/\.w7 (\.z\w+|\[stroke="#2fb59a"\])\{stroke:#26917b\}/)
   expect(winter).toMatch(/(\.z\w+|\[stroke="#36b8e3"\])\{stroke:#a8d4e8\}/)
 })
@@ -1152,7 +1179,7 @@ test('everyone is drawn from shared parts, each person in their own colours', as
   // a person's own colour is always a stroke: a block of it filled would have no colour at all
   expect(source).toContain('style="fill:#')
   expect(source).not.toContain('fill:@')
-  expect(source).toMatch(/<g class="w w0"><g class="wn0" transform="translate\(0,21\)"><g style="--B:#[0-9a-f]{6};/)
+  expect(source).toMatch(/<g class="w w0"><g class="wn0" transform="translate\(0,21\)"><g class="wb" style="--B:#[0-9a-f]{6};/)
   // the drink buyer faces the machine, presses a button, then turns round and drinks
   expect(source).toMatch(/<g class="kb0">(?:<use href="#\w+"\/>){3}<\/g><g class="kb1">/)
   expect(source).toMatch(/\.v\d+ \.kf1\{animation:kf1\d+ /)
@@ -1173,7 +1200,11 @@ test('caught out by a shower with no umbrella, walkers run for it off the scene,
   expect(Number(run?.[1])).toBeGreaterThan(0)
   expect(source).toContain('@keyframes rl{to{translate:-60000px}}')
   expect(source).toMatch(/\.w1\{animation:wl [\d.]+s linear -[\d.]+s infinite,bob \.2s step-end \d+ 20s/)
-  expect(source).toContain('@keyframes bob{0%{translate:0 -1px}50%{translate:0 0}}')
+  // the bob moves them by another property than the walk does: on `translate` too, the later bob
+  // would win and throw them to the scene's left edge the moment the shower starts
+  const props = (name: string) => [...(source.match(new RegExp(`@keyframes ${name}\{(.*?)\}\}`))?.[1] ?? '').matchAll(/([a-z-]+):/g)].map(m => m[1])
+  expect(props('bob')).toEqual(['transform', 'transform'])
+  expect(props('wl')).toEqual(['translate', 'translate'])
   // and once off the scene they are gone, till the lap is over
   const seen = source.match(/@keyframes wn1\{(.*?)\}\}/)?.[1] ?? ''
   expect(seen).toMatch(/^0%\{opacity:1\}[\d.]+%\{opacity:0\}/)

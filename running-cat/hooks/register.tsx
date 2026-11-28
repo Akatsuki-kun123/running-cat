@@ -115,14 +115,43 @@ function onlyVariants(markup: string, keep: ReadonlySet<number>): string {
   return out + walks.slice(i)
 }
 
-// The art's defs with the visitors cut to those who show: stage i to the variants in shown[i].
-function defsFor(shown: ReadonlyMap<number, ReadonlySet<number>>): string {
-  const vis = VIS_PARTS.map(({ stage, markup }) => {
-    if (stage === null) return markup
+// The visitors who show, stage by stage: stage i cut to the variants in shown[i].
+function visStages(shown: ReadonlyMap<number, ReadonlySet<number>>): string {
+  return VIS_PARTS.map(({ stage, markup }) => {
+    if (stage === null) return ''
     const keep = shown.get(stage)
     return keep === undefined || keep.size === 0 ? '' : onlyVariants(markup, keep)
   }).join('')
-  return `${DEFS_BEFORE}${VIS_OPEN}${vis}</g>${DEFS_AFTER}`
+}
+// What else #vis holds (the gate's clip), kept in the defs whatever becomes of the stages.
+const VIS_REST = VIS_PARTS.filter(part => part.stage === null).map(part => part.markup).join('')
+
+// The art's defs, #vis holding the given stages.
+const defsFor = (stages: string): string => `${DEFS_BEFORE}${VIS_OPEN}${VIS_REST}${stages}</g>${DEFS_AFTER}`
+
+// The park's copies of the visitors, a tile apart, each a <use> of #vis. Drawn out in full instead
+// where the size allows: an image redraws a <use> of something that holds <use>s at a great cost
+// every frame, and with the visitors so the whole band missed every other frame while the park
+// moved (34 frames a second in Edge, 60 drawn out). The copies most often in view go first.
+const VIS_USE = /<use class="u(\d)" href="#vis" x="(-?\d+)"\/>/g
+const VIS_FULL_FIRST = [1, 2, 3, 0]
+
+// How far a copy's visitors reach past its tile (art px): from 44 to 743 of its 640, measured over
+// every stage and visit; a little to spare each side.
+const REACH_LEFT = 48
+const REACH_RIGHT = 128
+// The copies (u0..u3, a tile apart from -1 tile) wholly off the scene while the park stands still
+// at `ranMs`, as layerStyle holds it: none of their visitors can come into view before it moves.
+function copiesAway(ranMs: number): Set<number> {
+  const park = LAYERS.find(layer => layer.cls === 'lp')
+  if (park === undefined) return new Set()
+  const shift = Math.round(((ranMs / 1000) * park.speed) % park.tile) % park.tile
+  const away = new Set<number>()
+  VISIT_COPIES.forEach((k, c) => {
+    const x = k * park.tile - shift
+    if (x + park.tile + REACH_RIGHT <= 0 || x - REACH_LEFT >= PARK_W) away.add(c)
+  })
+  return away
 }
 const ART_BACK = classed(PARK_BACK)
 const ART_MID = classed(PARK_MID)
@@ -135,8 +164,19 @@ const restSince = atom({ plugin: 'running-cat', key: 'restSince' } as const, 0)
 // once the task is over; and whether it was napping then.
 const wokeAt = atom({ plugin: 'running-cat', key: 'wokeAt' } as const, null)
 const wasNapping = atom({ plugin: 'running-cat', key: 'wasNapping' } as const, false)
-// The time the cat has run in all, so the park stops where the run left it and starts from there.
+// What set it going again mid-task (a trip, a breather, an answer to its wait), or null for the
+// task's own start; and since when it has stood waiting on you, or null.
+const runLead = atom({ plugin: 'running-cat', key: 'runLead' } as const, null)
+const waitingSince = atom({ plugin: 'running-cat', key: 'waitingSince' } as const, null)
+// How far the cat has run in all, as ms of a run at a steady pace, so the park stops where the run
+// left it and starts from there.
 const runMs = atom({ plugin: 'running-cat', key: 'runMs' } as const, 0)
+// How briskly it runs, by how the work goes: easy while Claude only reads, brisk while it edits and
+// runs commands thick and fast. Since when: the run before that is banked in runMs.
+const pace = atom({ plugin: 'running-cat', key: 'pace' } as const, 'steady')
+const paceSince = atom({ plugin: 'running-cat', key: 'paceSince' } as const, 0)
+// The subagents at work, a kitten each running along: when each joined, and when it left, or null.
+const kittens = atom({ plugin: 'running-cat', key: 'kittens' } as const, [])
 // When the current run began, or null while the cat is still. A cat getting up starts later.
 const runStartedAt = atom({ plugin: 'running-cat', key: 'runStartedAt' } as const, null)
 // When a task done before the cat had run a while ends its run (it runs on till then), or null.
@@ -151,13 +191,16 @@ const idleSince = atom({ plugin: 'running-cat', key: 'idleSince' } as const, 0)
 const idleIntro = atom({ plugin: 'running-cat', key: 'idleIntro' } as const, 'still')
 // Bumped when the cat moves on to the second part of standing about, to redraw the band.
 const idleTick = atom({ plugin: 'running-cat', key: 'idleTick' } as const, 0)
-// Bumped every FRESH_MS, so the band is always due a redraw. A session out of sight draws nothing,
-// and the app shows its band again as it was last drawn, the park's clock stuck at that moment
-// (night gone to noon after ten minutes away) until something redraws it. Bumped while out of
-// sight, the band is redrawn as soon as it is seen again. It also gives a band left alone a fresh
-// plan: the people's plans repeat every HORIZON, but a run for it in a shower is a one-off.
+// Bumped to have the band drawn afresh. A session out of sight draws nothing, and the app shows its
+// band again as it was last drawn, the park's clock stuck at that moment (night gone to noon after
+// ten minutes away) until something redraws it. Bumped while out of sight, the band is redrawn as
+// soon as it is seen again. But each redraw costs a band in view a stall and a jump: the app reads
+// the new drawing (100 KB and more) and starts every animation over, a few frames late. So it is
+// bumped only once the last drawing is STALE_MS old, checked every FRESH_MS: a drawing plans the
+// people, the weather and the visitors well past that (VISIT_WINDOW, WX_WINDOW, HORIZON).
 const freshTick = atom({ plugin: 'running-cat', key: 'freshTick' } as const, 0)
 const FRESH_MS = 30_000
+const STALE_MS = 120_000
 // What `/running-cat season` and `/running-cat weather` force for a demo, this session only.
 const demoSeason = atom({ plugin: 'running-cat', key: 'demoSeason' } as const, null)
 const demoWeather = atom({ plugin: 'running-cat', key: 'demoWeather' } as const, null)
@@ -228,6 +271,54 @@ const START: readonly Step[] = [
   { frames: CAT_FRAMES.walk, ms: 100, times: 1 },
   { frames: CAT_FRAMES.run, ms: 100 },
 ]
+
+// The cat keeps up with the work. A tool that fails trips it: it brakes, flashing red, catches
+// itself, and walks on into its run.
+const TRIP: readonly Step[] = [
+  { frames: CAT_FRAMES.stop, ms: 110, times: 1 },
+  { frames: CAT_FRAMES.hurt, ms: 120, times: 3 },
+  { frames: CAT_FRAMES.idle.slice(0, 4), ms: 120, times: 1 },
+  { frames: CAT_FRAMES.walk, ms: 100, times: 1 },
+  { frames: CAT_FRAMES.run, ms: 100 },
+]
+// Long at it, it stops for breath now and then: it brakes, stands panting, sits down a moment to
+// rest, then gets up and walks on slowly before it runs again.
+const TIRED: readonly Step[] = [
+  { frames: CAT_FRAMES.stop, ms: 140, times: 1 },
+  { frames: CAT_FRAMES.idle, ms: 70, times: 3 },
+  { frames: CAT_FRAMES.sitDown, ms: 160, times: 1 },
+  { frames: CAT_FRAMES.sit1, ms: 140, times: 1 },
+  { frames: CAT_FRAMES.sitUp, ms: 150, times: 1 },
+  { frames: CAT_FRAMES.walk, ms: 130, times: 1 },
+  { frames: CAT_FRAMES.run, ms: 100 },
+]
+// Waiting on you (a question, or a tool to allow): it brakes, turns to look out at you, and waits.
+const WAIT: readonly Step[] = [
+  { frames: CAT_FRAMES.stop, ms: 110, times: 1 },
+  { frames: CAT_FRAMES.look.slice(0, 4), ms: 140, times: 1 },
+  { frames: CAT_FRAMES.look.slice(4, 8), ms: 260 },
+]
+// Answered, it turns back and walks on into its run.
+const BACK: readonly Step[] = [
+  { frames: CAT_FRAMES.look.slice(8), ms: 120, times: 1 },
+  { frames: CAT_FRAMES.walk, ms: 100, times: 1 },
+  { frames: CAT_FRAMES.run, ms: 100 },
+]
+// The tests pass after failing: it brakes, jumps for joy, and walks on into its run.
+const CHEER: readonly Step[] = [
+  { frames: CAT_FRAMES.stop, ms: 110, times: 1 },
+  { frames: CAT_FRAMES.jump, ms: 110, times: 1 },
+  { frames: CAT_FRAMES.walk, ms: 100, times: 1 },
+  { frames: CAT_FRAMES.run, ms: 100 },
+]
+type RunLead = 'trip' | 'tired' | 'back' | 'cheer'
+const RUN_LEADS: Record<RunLead, readonly Step[]> = { trip: TRIP, tired: TIRED, back: BACK, cheer: CHEER }
+// Run this long without a stop, it stops for breath.
+const TIRED_AFTER_MS = 3 * 60_000
+// A trip at most this often: a run of failing tools is one stumble, not a cat on the ground.
+const TRIP_EVERY_MS = 20_000
+// A question put to you this long before it waits: a hook that answers at once leaves it running.
+const WAIT_AFTER_MS = 1_500
 
 // How long the steps before a move's loop take.
 const leadMs = (move: readonly Step[]): number =>
@@ -319,14 +410,71 @@ function catMove(move: readonly Step[], elapsedMs: number): { svg: string; css: 
 
 const CAT_STYLE = '.c{opacity:0}@media (prefers-reduced-motion: reduce){.c{animation:none!important}.c0{opacity:1}}'
 
+// The cat's run at the pace it goes now: its legs keep time with the park going by.
+const runMs100 = (): number => Math.round(100 / paceK)
+const paced = (move: readonly Step[]): readonly Step[] =>
+  move.map((step, k) => (k === move.length - 1 && step.frames === CAT_FRAMES.run ? { ...step, ms: runMs100() } : step))
+
+// ---------- kittens: a subagent at work runs along ----------
+
+type Kitten = { id: string; since: number; leftAt: number | null }
+// At most this many run along; a kitten is drawn at half size, an art pixel to a screen pixel.
+const KITTENS_SHOWN = 3
+// How long a kitten takes to catch up with the cat, and to run off once its work is done.
+const KITTEN_JOIN_MS = 1_200
+const KITTEN_LEAVE_MS = 1_200
+// A kitten's place: behind the cat, one after the other.
+const kittenX = (slot: number): number => CAT_LEFT - 12 * (slot + 1)
+const KITTEN_RUN = CAT_FRAMES.run.map(frame => classed(frame))
+const KITTEN_STAND = classed(CAT_FRAMES.idle[0] ?? '')
+
+// The kittens, with the cat: running along as the park moves (from `go` s on), each a little out
+// of step with the next, coming up from behind as it joins; standing by while the cat is stopped
+// (the park held, or still); and once its work is done, turning round and running back off.
+function kittenMove(kits: readonly Kitten[], nowMs: number, go: Go): { svg: string; css: string } {
+  const ms = runMs100()
+  const n = KITTEN_RUN.length
+  // the frames drawn once, each kitten a <use> of them (of paths only: cheap to play)
+  let svg = `<defs>${KITTEN_RUN.map((frame, i) => `<g id="kq${i}">${frame}</g>`).join('')}<g id="kqs">${KITTEN_STAND}</g></defs>`
+  let css = `@keyframes kj{from{transform:translateX(-${CAT_LEFT}px)}}@keyframes kl{to{transform:translateX(-${CAT_LEFT + 20}px)}}`
+  kits.slice(0, KITTENS_SHOWN).forEach((kit, slot) => {
+    const x = kittenX(slot)
+    const y = CAT_FEET - CAT_H / 2
+    const isLeaving = kit.leftAt !== null
+    const place = isLeaving ? `translate(${x + 11},${y}) scale(-.5,.5)` : `translate(${x},${y}) scale(.5)`
+    const runs = isLeaving || go !== null
+    const stands = !isLeaving && go !== 0
+    let frames = ''
+    if (stands) {
+      // stood by till the park moves (for good, if it is still)
+      frames += go === null ? '<use href="#kqs"/>' : `<use class="c ks${slot}" href="#kqs"/>`
+      if (go !== null) css += `.ks${slot}{animation:on ${go.toFixed(3)}s steps(1,end)}`
+    }
+    if (runs) {
+      const run = KITTEN_RUN.map((_, i) => `<use class="c kf${slot}${i}${i === 0 ? ' c0' : ''}" href="#kq${i}"/>`).join('')
+      frames += stands ? `<g class="kr${slot}">${run}</g>` : run
+      if (stands && go !== null) css += `.kr${slot}{animation:kon 1ms ${go.toFixed(3)}s both}`
+      // out of step with the cat and each other by a frame or two
+      const lag = (slot + 1) * 2 * ms
+      css += KITTEN_RUN.map((_, i) => `.kf${slot}${i}{animation:fr${n} ${((n * ms) / 1000).toFixed(3)}s steps(1,end) infinite ${((i * ms - lag) / 1000).toFixed(3)}s}`).join('')
+    }
+    svg += `<g class="km${slot}"><g transform="${place}">${frames}</g></g>`
+    if (isLeaving) css += `.km${slot}{animation:kl ${KITTEN_LEAVE_MS / 1000}s ease-in ${(((kit.leftAt ?? nowMs) - nowMs) / 1000).toFixed(3)}s forwards}`
+    else if (go !== null && nowMs - kit.since < KITTEN_JOIN_MS) css += `.km${slot}{animation:kj ${KITTEN_JOIN_MS / 1000}s ease-out ${((kit.since - nowMs) / 1000).toFixed(3)}s both}`
+  })
+  return { svg, css: css + '@keyframes kon{from{opacity:0}}' + ON + loopKeyframes(n) }
+}
+
 // ---------- the park ----------
 
 // Where each layer stands after `ranMs` of running: moving on from there, or held there. The
 // layers glide (no whole-pixel steps), in time with the walkers, so nobody judders against the path.
 function layerStyle(ranMs: number, go: Go): string {
-  const layers = LAYERS.map(({ cls, tile, speed }) => {
+  const layers = LAYERS.map(({ cls, tile, speed: steady }) => {
+    // (how far it stands goes by the steady speed: ranMs is a steady run's worth)
+    const at = ((ranMs / 1000) * steady) % tile
+    const speed = steady * paceK
     const seconds = tile / speed
-    const at = ((ranMs / 1000) * speed) % tile
     // Held on a half art pixel, a whole screen pixel, so a still park is sharp.
     const held = Math.round(at * 2) / 2
 
@@ -361,6 +509,10 @@ type Go = number | null
 const LOOP = WALK_LOOP
 // How fast the path moves while the cat runs (the park layer's speed).
 const PATH_SPEED = LAYERS.find(layer => layer.cls === 'lp')?.speed ?? 0
+// How fast the park goes by at the pace the cat runs now (1 at a steady pace), set before each
+// drawing. Where things stand goes by how far it has run in all (a steady run's worth, ranMs); how
+// fast they go from there, by this.
+let paceK = 1
 
 const wrap = (x: number, span: number): number => ((x % span) + span) % span
 
@@ -381,7 +533,7 @@ function walkerStyle(nowMs: number, ranMs: number, go: Go): string {
     const walk = LOOP / dur
     const t0 = nowMs / 1000
     const at = wrap(dir * walk * t0 - PATH_SPEED * (ranMs / 1000), LOOP)
-    const speed = dir * walk - (go === 0 ? PATH_SPEED : 0)
+    const speed = dir * walk - (go === 0 ? PATH_SPEED * paceK : 0)
     const { name, seconds, delay } = walkAnimation(at, speed)
     // to the thousandth of a second: the cyclist covers ~40 art px a second, so a hundredth off in
     // a lap's length drifts them half a pixel by the next redraw
@@ -389,7 +541,7 @@ function walkerStyle(nowMs: number, ranMs: number, go: Go): string {
     if (go !== null && go > 0) {
       // on their walk till the path moves, then on it as it carries them: the second walk, from
       // where the first leaves them, takes over (the first is listed last, so it wins till then)
-      const then = walkAnimation(wrap(dir * walk * (t0 + go) - PATH_SPEED * (ranMs / 1000), LOOP), dir * walk - PATH_SPEED, go)
+      const then = walkAnimation(wrap(dir * walk * (t0 + go) - PATH_SPEED * (ranMs / 1000), LOOP), dir * walk - PATH_SPEED * paceK, go)
       walks =
         `${then.name} ${then.seconds.toFixed(3)}s linear ${(-then.delay).toFixed(3)}s infinite,` +
         `${name} ${seconds.toFixed(3)}s linear -${delay.toFixed(3)}s ${((delay + go) / seconds).toFixed(4)}`
@@ -401,7 +553,7 @@ function walkerStyle(nowMs: number, ranMs: number, go: Go): string {
       .map(d => `,bob ${BOB}s steps(1,end) ${Math.ceil((d.exit - d.r) / BOB)} ${(d.r - nowMs / 1000).toFixed(2)}s`)
       .join('')
     return `.w${i}{animation:${walks}${bobs}}`
-  }).join('') + `@keyframes bob{0%{translate:0 -1px}50%{translate:0 0}}` + RUN_KEYFRAMES
+  }).join('') + `@keyframes bob{0%{transform:translateY(-1px)}50%{transform:none}}` + RUN_KEYFRAMES
 }
 
 // ---------- who is out: fewer people at night ----------
@@ -491,8 +643,8 @@ function walkerPlan(w: (typeof WALKERS)[number], t0: number, ran0: number, go: G
   const walk = LOOP / dur
   // the path sets off at `moves` (never, if still), and carries them from then
   const moves = go === null ? Infinity : t0 + go
-  const x = (t: number): number => dir * walk * t - PATH_SPEED * (ran0 + Math.max(0, t - moves))
-  const speedAt = (t: number): number => dir * walk - (t >= moves ? PATH_SPEED : 0)
+  const x = (t: number): number => dir * walk * t - PATH_SPEED * (ran0 + paceK * Math.max(0, t - moves))
+  const speedAt = (t: number): number => dir * walk - (t >= moves ? PATH_SPEED * paceK : 0)
   // the times from `from` on that they pass a lap's end, the path's speed changing on the way
   const lapEnds = (from: number): number[] =>
     from < moves && moves < from + HORIZON
@@ -514,11 +666,27 @@ function walkerPlan(w: (typeof WALKERS)[number], t0: number, ran0: number, go: G
   const lap0 = Math.floor(x(t0 + 0.01) / LOOP)
   const kept = seen.get(lap0)
   const start0 = kept !== undefined && kept <= t0 ? kept : lapStart(lap0)
+  // The lap each crossing takes them onto, and when that lap set off. One begun before this redraw
+  // keeps its time, even if they come back onto it: the path held, a walker it was carrying past
+  // the scene's edge walks back off it, and on again once it moves. Written down as the time of
+  // coming back, that lap would seem to start later, and the next redraw, finding a start yet to
+  // come, would work one out afresh: someone just at the edge in or out of sight for a moment.
+  const lapOf = (c: number): number => Math.floor(x(c + 0.01) / LOOP)
+  const begun = (k: number): number | undefined => (k === lap0 ? start0 : [seen.get(k)].find(at => at !== undefined && at <= t0))
+  const starts = laps.map(c => begun(lapOf(c)) ?? c)
   // write down the plan: this lap's start, and the ones to come (a later redraw may revise those)
   for (const [k] of seen) if (Math.abs(k - lap0) > laps.length + 2) seen.delete(k)
   seen.set(lap0, start0)
-  for (const c of laps) seen.set(Math.floor(x(c + 0.01) / LOOP), c)
-  const setOff = (t: number): number => laps.filter(c => c <= t).pop() ?? start0
+  laps.forEach((c, n) => {
+    if (begun(lapOf(c)) === undefined) seen.set(lapOf(c), starts[n]!)
+  })
+  const setOff = (t: number): number => {
+    let at = start0
+    laps.forEach((c, n) => {
+      if (c <= t) at = starts[n]!
+    })
+    return at
+  }
   const out = (t: number): boolean => isOut(hours, setOff(t)) && !(rain === 'home' && isRaining(setOff(t)))
   const dashes: Dash[] = rainStarts(t0 - DASH_BACK, t0 + HORIZON).flatMap(r => {
     // a shower that began before this redraw is seen from now, on the lap they are on now
@@ -565,6 +733,9 @@ function walkerHours(t0: number, ran0: number, go: Go): string {
     const gone = (t: number): boolean => dashes.some(d => t >= d.exit && t < d.end)
     const run = dashes.map(d => runAnimation(t0, d)).join(',')
     let css = plan(`wn${i}`, t => out(t) && !gone(t), run)
+    // out of sight the whole while: not drawn at all, so nothing of theirs is played each frame
+    // (their plan stays, all of it unseen, for the next redraw to carry on from)
+    if (css.includes('{opacity:0}') && !css.includes('{opacity:1}')) return `${css}.w${i}{display:none}`
     if (rain === 'umbrella') {
       const wet = plan(`ww${i}`, t => isRaining(setOff(t)))
       // the umbrella shows only if some lap is wet; the dry frames step aside for it
@@ -574,8 +745,9 @@ function walkerHours(t0: number, ran0: number, go: Go): string {
   }).join('')
 }
 
-// How far ahead a redraw plans who comes to each stage. The band is redrawn every half minute
-// while it is in view, so this only has to outlast a while out of sight; past it the park empties.
+// How far ahead a redraw plans who comes to each stage. The band is redrawn at least every STALE_MS
+// while it is in view, so this only has to outlast that, and a while out of sight; past it the park
+// empties.
 const VISIT_WINDOW = 360
 // The cast's plan for the weather as it is, or as a demo forces it: one plan for each.
 const casts = new Map<string, Park>()
@@ -626,8 +798,8 @@ function visitorHours(t0: number, ran0: number, go: Go): string {
   const park = LAYERS.find(layer => layer.cls === 'lp')
   const tile = park?.tile ?? 640
   const parkV = park?.speed ?? 0
-  const ranAt = (t: number): number => ran0 + (go === null ? 0 : Math.max(0, t - t0 - go))
-  const wraps = go === null ? [] : crossings(t0 + go, ran0 * parkV, parkV, tile)
+  const ranAt = (t: number): number => ran0 + (go === null ? 0 : paceK * Math.max(0, t - t0 - go))
+  const wraps = go === null ? [] : crossings(t0 + go, ran0 * parkV, parkV * paceK, tile)
   const vars: string[][] = VISIT_COPIES.map(() => [])
   let css = ''
   const cast = castNow()
@@ -1011,23 +1183,41 @@ export function shortCss(css: string): string {
 }
 
 // The whole band: the park at its scroll, its people, and the cat in its spot.
-function scene(move: readonly Step[], moveMs: number, ranMs: number, go: Go, nowMs: number): string {
-  const cat = catMove(move, moveMs)
+function scene(move: readonly Step[], moveMs: number, ranMs: number, go: Go, nowMs: number, kits: readonly Kitten[] = []): string {
+  const cat = catMove(go === null ? move : paced(move), moveMs)
+  const kit = kits.length === 0 ? { svg: '', css: '' } : kittenMove(kits, nowMs, go)
   // (the style first: it plans who comes, and the defs draw only them)
   const look = lookAt(nowMs / 1000)
-  const style = shortCss(CORNER + (go === null ? '' : GLIDE) + sunStyle(nowMs / 1000) + PAINT_CSS + CAT_STYLE + cat.css + layerStyle(ranMs, go) + peopleStyle(nowMs, ranMs, go))
+  const style = shortCss(CORNER + (go === null ? '' : GLIDE) + sunStyle(nowMs / 1000) + PAINT_CSS + CAT_STYLE + cat.css + kit.css + layerStyle(ranMs, go) + peopleStyle(nowMs, ranMs, go))
 
-  const draw = (shown: Map<number, Set<number>>): string =>
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -${PARK_TOP} ${PARK_W} ${PARK_H + PARK_TOP}" width="${PARK_W * SCALE}" height="${(PARK_H + PARK_TOP) * SCALE}" ` +
-    `shape-rendering="crispEdges" preserveAspectRatio="xMidYMax slice">` +
-    `<style>${style}</style>` +
-    `${look.defs(defsFor(shown))}${look.back}${ART_MID}${cat.svg}${look.front}</svg>`
-  const source = draw(shownLast)
-  // Past the app's limit the band would not be drawn at all: first the fireflies and the falling
-  // petals go (only there to look at), then if need be the visitors: an empty park beats no park.
-  if (source.length <= SVG_LIMIT) return source
-  const plain = withoutExtras(source)
-  return plain.length <= SVG_LIMIT ? plain : withoutExtras(draw(new Map()))
+  // A still park keeps its copies where they stand: those wholly off the scene are left out.
+  const away = go === null ? copiesAway(ranMs) : new Set<number>()
+  const kept = VIS_FULL_FIRST.filter(k => !away.has(k))
+  // with the first `full` copies of the visitors drawn out, the rest as <use>s of #vis
+  const draw = (shown: Map<number, Set<number>>, full: number): string => {
+    const stages = visStages(shown)
+    const drawn = new Set(stages === '' ? [] : kept.slice(0, full))
+    const mid = ART_MID.replace(VIS_USE, (use, k: string, x: string) =>
+      away.has(Number(k)) ? '' : drawn.has(Number(k)) ? `<g class="u${k}" transform="translate(${x},0)">${stages}</g>` : use)
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -${PARK_TOP} ${PARK_W} ${PARK_H + PARK_TOP}" width="${PARK_W * SCALE}" height="${(PARK_H + PARK_TOP) * SCALE}" ` +
+      `shape-rendering="crispEdges" preserveAspectRatio="xMidYMax slice">` +
+      `<style>${style}</style>` +
+      `${look.defs(defsFor(drawn.size === kept.length ? '' : stages))}${look.back}${mid}${kit.svg}${cat.svg}${look.front}</svg>`
+    )
+  }
+  // Past the app's limit the band would not be drawn at all: first the visitors' copies go back to
+  // <use>s, one by one (smaller, if slower to play); then the fireflies and the falling petals go
+  // (only there to look at); then if need be the visitors: an empty park beats no park.
+  for (let full = VIS_FULL_FIRST.length; full >= 0; full--) {
+    const source = draw(shownLast, full)
+    if (source.length <= SVG_LIMIT) return source
+  }
+  for (let full = VIS_FULL_FIRST.length; full >= 0; full--) {
+    const plain = withoutExtras(draw(shownLast, full))
+    if (plain.length <= SVG_LIMIT) return plain
+  }
+  return withoutExtras(draw(new Map(), 0))
 }
 const SVG_LIMIT = 131_072
 
@@ -1070,24 +1260,227 @@ async function cancelFinish($: EngineInterface): Promise<void> {
   await update($, finishAt, () => null)
 }
 
+// How far the run open since `startedAt` has gone by `now`, as ms of a steady run: from the last
+// change of pace (what went before is banked), at the pace it goes now.
+async function openRun($: EngineInterface, startedAt: number | null, now: number): Promise<number> {
+  if (startedAt === null) return 0
+  const from = Math.max(startedAt, await read($, paceSince))
+  return Math.max(0, now - from) * PACES[await read($, pace)]
+}
+
 // The run is banked and the cat comes to a stand the given way; it settles down after REST_AFTER_MS.
 async function endRun($: EngineInterface, intro: Intro): Promise<void> {
   const now = await $.clock.now()
   const startedAt = await read($, runStartedAt)
   if (startedAt !== null) {
-    await update($, runMs, ms => ms + Math.max(0, now - startedAt))
+    const ran = await openRun($, startedAt, now)
+    await update($, runMs, ms => ms + ran)
     await update($, runStartedAt, () => null)
   }
   await update($, wokeAt, () => null)
   await update($, finishAt, () => null)
+  await stopAsking($)
+  await update($, waitingSince, () => null)
   await standUp($, intro)
   await wake($, true)
+}
+
+// Whether the cat is in its run now: set going, got up, not stood waiting, the task not done.
+async function isRunning($: EngineInterface, now: number): Promise<boolean> {
+  const startedAt = await read($, runStartedAt)
+  return startedAt !== null && now >= startedAt && (await read($, finishAt)) === null
+}
+
+// Mid-task the cat stops in its run the given way, the park held where it stands, and runs on.
+async function runOn($: EngineInterface, kind: RunLead): Promise<void> {
+  const now = await $.clock.now()
+  const ran = await openRun($, await read($, runStartedAt), now)
+  await update($, runMs, ms => ms + ran)
+  const ms = leadMs(RUN_LEADS[kind])
+  await update($, wokeAt, () => now)
+  await update($, runLead, () => kind)
+  await update($, runStartedAt, () => now + ms)
+  wakeTimer?.cancel()
+  wakeTimer = $.clock.after(ms, () => {
+    wakeTimer = undefined
+    void update($, wakeDone, n => n + 1)
+  })
+}
+
+// When the cat last tripped, so a run of failing tools trips it once.
+let trippedAt = -Infinity
+
+async function trip($: EngineInterface): Promise<void> {
+  const now = await $.clock.now()
+  if (now - trippedAt < TRIP_EVERY_MS || !(await isRunning($, now))) return
+  trippedAt = now
+  await runOn($, 'trip')
+}
+
+// Refused or cut short by you, not failed: no trip for those.
+const NOT_A_FAILURE = /doesn't want to (proceed|take this action)|interrupted by user|rejected|denied/i
+const resultText = (content: unknown): string =>
+  typeof content === 'string' ? content : Array.isArray(content) ? content.map(b => (typeof b?.text === 'string' ? b.text : '')).join(' ') : ''
+
+// A question put to you: the cat stops and waits, once it has been up a moment. The loop that
+// asked (a subagent's id, or null for the main one): its next step means it was answered.
+let askTimer: Timer | undefined
+let askedIn: string | null = null
+
+function startAsking($: EngineInterface): void {
+  askTimer?.cancel()
+  askTimer = $.clock.after(WAIT_AFTER_MS, async () => {
+    askTimer = undefined
+    const now = await $.clock.now()
+    const startedAt = await read($, runStartedAt)
+    // still setting off counts too: it stops where it got to
+    if (startedAt === null || (await read($, finishAt)) !== null || (await read($, waitingSince)) !== null) return
+    const ran = await openRun($, startedAt, now)
+    await update($, runMs, ms => ms + ran)
+    await update($, runStartedAt, () => null)
+    await update($, waitingSince, () => now)
+  })
+}
+
+// The question is answered (or the work went on): a cat waiting turns back and runs on.
+async function stopAsking($: EngineInterface): Promise<void> {
+  askTimer?.cancel()
+  askTimer = undefined
+}
+
+async function answered($: EngineInterface): Promise<void> {
+  await stopAsking($)
+  if ((await read($, waitingSince)) === null) return
+  await update($, waitingSince, () => null)
+  await runOn($, 'back')
+}
+
+// ---------- the work's pace, its tests, its subagents ----------
+
+// How fast the park goes by, and the cat's legs with it, at each pace.
+const PACES = { easy: 0.75, steady: 1, brisk: 1.4 } as const
+type Pace = keyof typeof PACES
+// Tools that only look, and tools that change things or run them.
+const READS = new Set(['Read', 'Grep', 'Glob', 'LS', 'WebFetch', 'WebSearch', 'NotebookRead', 'ToolSearch'])
+const CHANGES = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash', 'PowerShell'])
+// The pace goes by the tools used in this last stretch.
+const PACE_WINDOW_MS = 30_000
+let recentTools: { at: number; changes: boolean; reads: boolean }[] = []
+let paceTimer: Timer | undefined
+
+// Brisk with things changed and run thick and fast; easy while it only reads; steady otherwise.
+function paceOf(): Pace {
+  const changes = recentTools.filter(t => t.changes).length
+  if (recentTools.length >= 4 && changes >= 3) return 'brisk'
+  if (recentTools.length >= 2 && recentTools.every(t => t.reads)) return 'easy'
+  return 'steady'
+}
+
+// A pace holds this long at least: each change redraws the band, and putting up a new drawing
+// costs the app a moment (a frame or two of the park held), so it is not to flicker with the work.
+const PACE_HOLD_MS = 15_000
+
+async function setPace($: EngineInterface): Promise<void> {
+  const now = await $.clock.now()
+  recentTools = recentTools.filter(t => now - t.at < PACE_WINDOW_MS)
+  const next = paceOf()
+  const since = await read($, paceSince)
+  if (next !== (await read($, pace)) && now - since < PACE_HOLD_MS) {
+    // too soon after the last change: looked at again once it has held
+    paceTimer?.cancel()
+    paceTimer = $.clock.after(since + PACE_HOLD_MS - now, () => {
+      paceTimer = undefined
+      void setPace($)
+    })
+    return
+  }
+  if (next !== (await read($, pace))) {
+    // the run so far banked at the pace it went, and on from here at the new one
+    const ran = await openRun($, await read($, runStartedAt), now)
+    await update($, runMs, ms => ms + ran)
+    await update($, paceSince, () => now)
+    await update($, pace, () => next)
+  }
+  // back to steady as the work it went by drops out of the stretch
+  paceTimer?.cancel()
+  paceTimer = undefined
+  const oldest = recentTools[0]
+  if (oldest !== undefined) {
+    paceTimer = $.clock.after(PACE_WINDOW_MS - (now - oldest.at) + 1, () => {
+      paceTimer = undefined
+      void setPace($)
+    })
+  }
+}
+
+async function resetPace($: EngineInterface): Promise<void> {
+  paceTimer?.cancel()
+  paceTimer = undefined
+  recentTools = []
+  // (long since: the first change of pace comes at once)
+  await update($, pace, () => 'steady')
+  await update($, paceSince, () => -PACE_HOLD_MS)
+}
+
+// A test run: a command that runs tests. Those of the main loop under way, by their tool call's id.
+const TEST_COMMAND = /\b(tests?|pytest|jest|vitest|mocha|rspec|phpunit|ctest|unittest)\b/i
+const testCalls = new Set<string>()
+// Whether the last test run failed: the next to pass has the cat jump for joy.
+let testsFailing = false
+
+async function cheer($: EngineInterface): Promise<void> {
+  if (await isRunning($, await $.clock.now())) await runOn($, 'cheer')
+}
+
+// The subagents at work, each one's kitten: when each was last heard from, and those done.
+const kittenHeard = new Map<string, number>()
+const kittensDone = new Set<string>()
+// A kitten not heard from in this long has its work done, whatever became of it.
+const KITTEN_LOST_MS = 10 * 60_000
+let kittenTimer: Timer | undefined
+
+async function kittenAt($: EngineInterface, id: string): Promise<void> {
+  if (kittensDone.has(id)) return
+  const now = await $.clock.now()
+  const isNew = !kittenHeard.has(id)
+  kittenHeard.set(id, now)
+  if (isNew) await update($, kittens, kits => [...kits, { id, since: now, leftAt: null }])
+}
+
+// Its work done, a kitten turns round and runs off, and is gone.
+async function kittenOff($: EngineInterface, id: string): Promise<void> {
+  if (!kittenHeard.has(id) || kittensDone.has(id)) return
+  kittensDone.add(id)
+  kittenHeard.delete(id)
+  const now = await $.clock.now()
+  await update($, kittens, kits => kits.map(kit => (kit.id === id ? { ...kit, leftAt: now } : kit)))
+  kittenTimer?.cancel()
+  kittenTimer = $.clock.after(KITTEN_LEAVE_MS, async () => {
+    kittenTimer = undefined
+    const later = await $.clock.now()
+    await update($, kittens, kits => kits.filter(kit => kit.leftAt === null || later - kit.leftAt < KITTEN_LEAVE_MS))
+  })
+}
+
+async function forgetKittens($: EngineInterface): Promise<void> {
+  kittenHeard.clear()
+  kittensDone.clear()
+  kittenTimer?.cancel()
+  kittenTimer = undefined
+  await update($, kittens, () => [])
 }
 
 function freshen($: EngineInterface): void {
   freshTimer?.cancel()
   freshTimer = $.clock.after(FRESH_MS, async () => {
-    void update($, freshTick, n => n + 1)
+    const now = await $.clock.now()
+    // (drawn at most STALE_MS ago: the next check, half a minute on, is still within it)
+    if (lastBand === null || now - lastBand.at > STALE_MS - FRESH_MS) void update($, freshTick, n => n + 1)
+    // long at it without a stop: a breather
+    const startedAt = await read($, runStartedAt)
+    if (startedAt !== null && now - startedAt >= TIRED_AFTER_MS && (await isRunning($, now))) await runOn($, 'tired')
+    // a subagent long unheard from: its kitten runs off
+    for (const [id, heard] of [...kittenHeard]) if (now - heard >= KITTEN_LOST_MS) await kittenOff($, id)
     freshen($)
   })
 }
@@ -1141,6 +1534,10 @@ export const register: Register = on => {
     const result = await next(e)
     forgetSetOffs()
     await cancelFinish($)
+    testCalls.clear()
+    testsFailing = false
+    await resetPace($)
+    await forgetKittens($)
     await update($, runStartedAt, () => null)
     await update($, wokeAt, () => null)
     await standUp($, 'still')
@@ -1190,7 +1587,12 @@ export const register: Register = on => {
     const wasResting = await read($, isResting)
     // a new task while the last one's run is held on: it just keeps running
     if (finishTimer !== undefined) await cancelFinish($)
-    if ((await read($, runStartedAt)) === null) {
+    // (a message sent while it waits on a question answers it)
+    if ((await read($, waitingSince)) !== null) {
+      await answered($)
+    } else if ((await read($, runStartedAt)) === null) {
+      await stopAsking($)
+      await update($, runLead, () => null)
       const lead = wasResting ? WAKE_MS : START_MS
       await update($, wokeAt, () => now)
       await update($, wasNapping, () => wasResting)
@@ -1215,7 +1617,9 @@ export const register: Register = on => {
   // first; a stopped task stops it at once. A subagent's turn is not the task.
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
+    // a subagent done: its kitten runs off
     if (e.agentId !== undefined) {
+      await kittenOff($, e.agentId)
       return result
     }
     const now = await $.clock.now()
@@ -1237,6 +1641,55 @@ export const register: Register = on => {
     return result
   })
 
+  // A tool's result is kept: one that failed (a test, a build, a command) trips the cat; anything
+  // done in the loop that put a question to you means it was answered.
+  on('session.append', async ($, e, next) => {
+    if (e.door === 'tool-result' || e.door === 'response') {
+      if ((e.agentId ?? null) === askedIn) await answered($)
+      // a subagent at work: a kitten runs along
+      if (e.agentId !== undefined) await kittenAt($, e.agentId)
+      const blocks = e.message.content
+      // the tools called, in any loop, set the pace; the main loop's test runs are watched
+      const calls = e.door === 'response' ? blocks.filter(block => block.type === 'tool_use') : []
+      if (calls.length > 0) {
+        const now = await $.clock.now()
+        for (const call of calls) {
+          const name = String(call.name ?? '')
+          recentTools.push({ at: now, changes: CHANGES.has(name), reads: READS.has(name) })
+          const command = (call.input as { command?: unknown } | undefined)?.command
+          if (e.agentId === undefined && typeof command === 'string' && TEST_COMMAND.test(command)) testCalls.add(String(call.id))
+        }
+        await setPace($)
+      }
+      if (e.door === 'tool-result' && e.agentId === undefined) {
+        const failed = blocks.some(block =>
+          block.type === 'tool_result' && block.is_error === true && !NOT_A_FAILURE.test(resultText(block.content)))
+        // a test run that passes after one that failed: a jump for joy
+        let passed = false
+        for (const block of blocks) {
+          if (block.type !== 'tool_result' || !testCalls.delete(String(block.tool_use_id))) continue
+          if (block.is_error !== true) {
+            passed ||= testsFailing
+            testsFailing = false
+          } else if (!NOT_A_FAILURE.test(resultText(block.content))) {
+            testsFailing = true
+          }
+        }
+        if (passed) await cheer($)
+        else if (failed) await trip($)
+      }
+    }
+    return next(e)
+  })
+
+  // A tool waits on your yes, or a question on your answer: the cat stops and looks out at you.
+  // (Only asks a person answers come here, after any classifier.)
+  on('classic.PermissionRequest', async ($, e, next) => {
+    askedIn = e.agent_id ?? null
+    startAsking($)
+    return next(e)
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     // The terminal draws no SVG, and a survey owns the band while it is up.
     if ((e.surface !== 'desktop' && e.surface !== 'mobile') || e.props.hasSurvey) {
@@ -1251,8 +1704,14 @@ export const register: Register = on => {
     const startedAt = await read($, runStartedAt)
     const banked = await read($, runMs)
     // A run still open counts up to now, so a band redrawn before turn.complete stops in place.
-    const ranMs = banked + (startedAt === null ? 0 : Math.max(0, now - startedAt))
-    const state = `${startedAt}|${banked}|${sky.season}|${sky.weather}`
+    const ranMs = banked + (await openRun($, startedAt, now))
+    const going = await read($, pace)
+    paceK = PACES[going]
+    const kits = await read($, kittens)
+    const state = `${startedAt}|${banked}|${sky.season}|${sky.weather}|${going}|${await read($, paceSince)}|${JSON.stringify(kits)}`
+    // the kittens along, for the alt text: those not yet run off
+    const along = kits.slice(0, KITTENS_SHOWN).filter(kit => kit.leftAt === null).length
+    const kittensAlt = along === 0 ? '' : along === 1 ? ', a kitten with it for a subagent at work' : `, ${along} kittens with it for subagents at work`
     const height = (PARK_H + PARK_TOP) * SCALE
 
     // (a short task's run goes on a moment after the task is done)
@@ -1261,24 +1720,31 @@ export const register: Register = on => {
       const napping = await read($, wasNapping)
       // Read so the redraw due when the cat has got up reaches this hook.
       const done = await read($, wakeDone)
-      const lead = napping ? WAKE : START
+      // waiting on you: stood still, looking out, the park held
+      const waiting = await read($, waitingSince)
+      if (waiting !== null) {
+        const source = sameOrNew(`wait|${state}|${waiting}`, fresh, now, () => scene(WAIT, now - waiting, ranMs, null, now, kits))
+        return <Svg source={source} alt={`A pixel cat stopped in a night park, looking out, waiting for your answer${kittensAlt}`} height={height} />
+      }
+      const again = await read($, runLead)
+      const lead = again !== null ? RUN_LEADS[again] : napping ? WAKE : START
       const isGettingUp = woke !== null && now - woke < leadMs(lead)
-      const source = sameOrNew(`run|${state}|${woke}|${napping}|${done}|${isGettingUp}`, fresh, now, () =>
+      const source = sameOrNew(`run|${state}|${woke}|${napping}|${again}|${done}|${isGettingUp}`, fresh, now, () =>
         woke === null
-          ? scene(RUN, now - (startedAt ?? now), ranMs, 0, now)
-          : scene(lead, now - woke, ranMs, isGettingUp ? (leadMs(lead) - (now - woke)) / 1000 : 0, now))
+          ? scene(RUN, now - (startedAt ?? now), ranMs, 0, now, kits)
+          : scene(lead, now - woke, ranMs, isGettingUp ? (leadMs(lead) - (now - woke)) / 1000 : 0, now, kits))
 
-      return <Svg source={source} alt="A pixel cat running through a night park while Claude works" height={height} />
+      return <Svg source={source} alt={`A pixel cat running through a night park while Claude works${kittensAlt}`} height={height} />
     }
 
     if (await read($, isResting)) {
       const since = await read($, restSince)
-      const source = sameOrNew(`rest|${state}|${since}`, fresh, now, () => scene(SETTLE, now - since, ranMs, null, now))
+      const source = sameOrNew(`rest|${state}|${since}`, fresh, now, () => scene(SETTLE, now - since, ranMs, null, now, kits))
 
       return (
         <Svg
           source={source}
-          alt="A pixel cat looking around, then lying down for a nap in a night park"
+          alt={`A pixel cat looking around, then lying down for a nap in a night park${kittensAlt}`}
           height={height}
         />
       )
@@ -1297,7 +1763,7 @@ export const register: Register = on => {
     const stand = standMove(intro, now - standSeenAt)
 
     const source = sameOrNew(`stand|${state}|${tick}|${intro}|${since}|${standSeenAt}|${stand.move === IDLE_SCRATCH}`, fresh, now, () =>
-      scene(stand.move, stand.at, ranMs, null, now))
-    return <Svg source={source} alt="A pixel cat sitting in a night park, waiting for a task" height={height} />
+      scene(stand.move, stand.at, ranMs, null, now, kits))
+    return <Svg source={source} alt={`A pixel cat sitting in a night park, waiting for a task${kittensAlt}`} height={height} />
   })
 }

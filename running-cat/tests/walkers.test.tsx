@@ -23,6 +23,22 @@ async function source($: Parameters<TestBody>[0]): Promise<string> {
 const HORIZON = 2 * DAY
 const EVERY = 30_000
 
+// Moves the clock on `ms`, from `at` ms after the session started, with a look at the band at each
+// of the cat's half-minute checks on the way (a long run's breather starts at one, and the band is
+// redrawn then: a drawing from before it cannot know the park will stop) and at the end. `look`
+// is handed how long the clock moved since the last look.
+async function onBy(clock: { advance: (ms: number) => Promise<void> }, at: number, ms: number, look: (step: number) => Promise<void>): Promise<number> {
+  let t = at
+  const end = at + ms
+  while (t < end) {
+    const next = Math.min(end, (Math.floor(t / EVERY) + 1) * EVERY)
+    await clock.advance(next - t)
+    await look(next - t)
+    t = next
+  }
+  return end
+}
+
 // Whether a walker's layer (wn: out, ww: umbrella, wd: no umbrella) shows `ms` into a drawing.
 function shows(svg: string, cls: string, ms: number): boolean {
   const frames = svg.match(new RegExp(`@keyframes ${cls}\\{(.*?)\\}\\}`))?.[1]
@@ -44,17 +60,29 @@ function who(svg: string, name: string, ms: number): string {
   return w
 }
 
-// Where a walker stands on the scene `ms` into a drawing (art px), from its walk animation.
+// Whether who stands on a stage's copy differs between a drawing `age` ms on and the next at its
+// start, give or take the 36 ms a keyframe's two decimals of 360 s can be off by.
+const moved = (before: string, after: string, name: string, age: number): boolean =>
+  [age - 40, age, age + 40].every(ms => who(before, name, ms) !== who(after, name, 0))
+
+// Where a walker stands on the scene `ms` into a drawing (art px), from its walk animation. A
+// drawing that holds the park a while (a breather, a stumble) has two walks: on their own till the
+// path moves (listed last, so it wins till then), then carried by it.
 function where(svg: string, i: number, ms: number): number | null {
-  const m = svg.match(new RegExp(`\\.w${i}\\{animation:(w[rl]) ([\\d.]+)s linear -([\\d.]+)s`))
-  if (!m) return null
+  const walks = svg.match(new RegExp(`\.w${i}\{animation:([^}]*)\}`))?.[1]
+  if (!walks) return null
+  const all = [...walks.matchAll(/(w[rl]) ([\d.]+)s linear (-?[\d.]+)s/g)]
+  if (!all.length) return null
+  const go = Number(svg.match(/hold ([\d.]+)s\}/)?.[1] ?? 0)
+  const s = ms / 1000
+  const m = all.length > 1 && s < go ? all[1]! : all[0]!
   const dur = Number(m[2])
-  const f = ((Number(m[3]) + ms / 1000) % dur) / dur
+  const f = ((((s - Number(m[3])) % dur) + dur) % dur) / dur
   return m[1] === 'wr' ? -28 + 992 * f : 964 - 992 * f
 }
 
 for (const hour of [9.37, 14.71, 17.13]) {
-  test(`nobody pops in or out, walking or at a stop, at a redraw while the cat runs (${hour}h)`, async ($, on) => {
+  test(`nobody pops in or out, walking or at a stop, at a redraw while the cat runs (${hour}h)`, { timeoutMs: 60_000 }, async ($, on) => {
     const clock = mock.clock(on, { now: (2880 * 500 + hour * 60) * 1000 })
     on('session.start', (_, e) => ({ cwd: e.cwd }))
     on('prompt.submit', (_, e) => ({ text: e.text }))
@@ -67,11 +95,11 @@ for (const hour of [9.37, 14.71, 17.13]) {
     let age = 0
     let redraws = 0
     const pops: string[] = []
-    for (let n = 0; n < 40; n++) {
-      await clock.advance(EVERY)
-      age += EVERY
+    let at = 10_000
+    for (let n = 0; n < 40; n++) at = await onBy(clock, at, EVERY + 7_000, async step => {
+      age += step
       const after = await source($)
-      if (after === before) continue
+      if (after === before) return
       redraws++
       for (const { i } of WALKERS) {
         const x = where(after, i, 0)
@@ -82,14 +110,12 @@ for (const hour of [9.37, 14.71, 17.13]) {
       }
       for (const { i } of VISITORS) {
         for (let c = 0; c < 6; c++) {
-          const was = who(before, `h${i}u${c}`, age)
-          const is = who(after, `h${i}u${c}`, 0)
-          if (was !== is) pops.push(`stage ${i} copy ${c}: ${was} -> ${is} after ${n + 1} redraws`)
+          if (moved(before, after, `h${i}u${c}`, age)) pops.push(`stage ${i} copy ${c}: ${who(before, `h${i}u${c}`, age)} -> ${who(after, `h${i}u${c}`, 0)} after ${n + 1} redraws`)
         }
       }
       before = after
       age = 0
-    }
+    })
     expect(pops).toEqual([])
     expect(redraws).toBeGreaterThan(1)
   })
@@ -184,4 +210,58 @@ test('a redraw at a fresh tick shows the park as it is now, not as it was drawn 
     expect((now - last).toFixed(1)).toBe((EVERY / 1000).toFixed(1))
     last = now
   }
+})
+
+test('a change of pace moves nobody: each walker, and who stands where, goes on from where they were', async ($, on) => {
+  const clock = mock.clock(on, { now: (2880 * 500 + 10.4 * 60) * 1000 })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } })
+  await clock.advance(5_000)
+  let row = 0
+  const use = async (name: string): Promise<void> => {
+    row += 1
+    await $.session.append({
+      message: { type: 'assistant', role: 'assistant', content: [{ type: 'tool_use', id: `toolu_p${row}`, name, input: {} }] },
+      door: 'response',
+      origin: { kind: 'model', model: 'claude-opus-5-5' },
+      uuid: `pace-${row}`,
+    })
+  }
+  let before = await source($)
+  let age = 0
+  const off: string[] = []
+  const look = async (n: number): Promise<void> => {
+    const after = await source($)
+    for (const { i } of WALKERS) {
+      const was = where(before, i, age)
+      const is = where(after, i, 0)
+      if (was !== null && is !== null && Math.abs(was - is) > 1 && Math.abs(was - is) < 990) off.push(`w${i} ${was.toFixed(1)} -> ${is.toFixed(1)} at ${n}`)
+      for (const cls of [`wn${i}`, `ww${i}`, `wd${i}`]) if (is !== null && is > -10 && is < 960 && shows(before, cls, age) !== shows(after, cls, 0)) off.push(`${cls} at ${n}`)
+    }
+    for (const { i } of VISITORS) {
+      for (let c = 0; c < 6; c++) if (moved(before, after, `h${i}u${c}`, age)) off.push(`h${i}u${c} at ${n}`)
+    }
+    before = after
+    age = 0
+  }
+  let at = 5_000
+  // brisk, steady, easy, brisk, ...: a burst of edits, then quiet, then reading
+  for (let n = 0; n < 12; n++) {
+    // (each pace held 15 s at least; eased back to steady 30 s after the burst: the band is redrawn then)
+    const wait = n % 3 === 1 ? 30_001 - 15_001 : 15_001
+    // (a look at each half-minute check on the way, and a last one after the tools)
+    at = await onBy(clock, at, wait - 1, async step => {
+      age += step
+      await look(n)
+    })
+    await clock.advance(1)
+    age += 1
+    at += 1
+    if (n % 3 === 0) for (const tool of ['Edit', 'Bash', 'Write', 'Edit']) await use(tool)
+    if (n % 3 === 2) for (const tool of ['Read', 'Grep']) await use(tool)
+    await look(n)
+  }
+  expect(off).toEqual([])
 })

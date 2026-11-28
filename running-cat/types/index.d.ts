@@ -5,6 +5,11 @@ declare module 'claude-code' {
       restSince: number
       wokeAt: number | null
       wasNapping: boolean
+      runLead: 'trip' | 'tired' | 'back' | 'cheer' | null
+      pace: 'easy' | 'steady' | 'brisk'
+      paceSince: number
+      kittens: { id: string; since: number; leftAt: number | null }[]
+      waitingSince: number | null
       runMs: number
       runStartedAt: number | null
       finishAt: number | null

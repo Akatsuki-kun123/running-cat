@@ -13,3 +13,6 @@ art/preview.png
 # Old copies
 *.before-*
 __pycache__/
+
+# Reports written for reading, not shipped
+reports/

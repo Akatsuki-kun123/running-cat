@@ -3,6 +3,14 @@
 Một chú mèo pixel trong công viên đêm Neon Tokyo, nằm phía trên ô chat của Claude (app desktop):
 
 - Có task: mèo đi vài bước rồi chạy tại chỗ, cảnh công viên trôi theo. Xong task thì mèo phanh lại; nếu task xong suôn sẻ thì nhảy lên mừng, còn nếu task bị dừng thì mèo lóe đỏ như bị đau.
+- Mèo theo sát công việc của Claude:
+  - Một tool bị lỗi (test fail, build lỗi, lệnh trả mã lỗi): mèo vấp, phanh lại, lóe đỏ, đứng lấy lại thăng bằng rồi đi tiếp và chạy. Nhiều lỗi liền nhau chỉ tính một lần vấp; lệnh bạn từ chối hay ngắt giữa chừng thì không tính.
+  - Chạy liền 3 phút không nghỉ: mèo phanh lại, đứng thở dốc, ngồi xuống nghỉ một chút rồi đứng dậy đi chậm vài bước và chạy tiếp.
+  - Claude chờ bạn (hỏi bạn một câu, hoặc chờ bạn cho phép một lệnh): mèo phanh lại, quay mặt ra nhìn bạn và đứng chờ, công viên đứng yên; bạn trả lời xong thì mèo quay lại và chạy tiếp.
+  - Test đang lỗi mà chạy lại qua được: mèo phanh lại, nhảy cẫng lên mừng rồi chạy tiếp. Lệnh khác (build, ls...) chạy được sau lỗi thì không tính.
+  - Mỗi subagent Claude giao việc có một mèo con (cỡ nửa mèo lớn) chạy từ phía sau lên, theo sau mèo lớn (tối đa 3 con). Mèo lớn dừng thì mèo con đứng chờ; subagent xong việc thì mèo con quay đầu chạy đi.
+  - Nhịp chạy theo khối lượng việc: Claude chỉ đọc (Read, Grep...) thì mèo chạy thong thả; sửa file và chạy lệnh dồn dập thì chạy nhanh hơn; công việc lắng xuống 30 giây thì về nhịp thường. Công viên trôi nhanh chậm theo, chân mèo cũng khớp nhịp.
+  - Trong lúc mèo vấp, nghỉ hay chờ, công viên dừng đúng chỗ rồi trôi tiếp từ đó.
 - Lúc chờ: mèo đứng thở, ngồi vẫy đuôi, đứng lên hai chân gãi ngứa.
 - Sau 20 giây không có task: mèo ngó phải ngó trái, ngồi xuống, nằm ngủ; ngủ lâu thì chuyển sang ngủ say.
 - Có task mới khi đang ngủ: mèo ngẩng đầu, đứng dậy, cúi rạp vươn vai, đi vài bước rồi mới chạy.

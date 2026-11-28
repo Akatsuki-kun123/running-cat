@@ -1147,6 +1147,9 @@ def uses(parts):
     return "".join(use(n) for n in parts)
 
 
+SHADES = {PA.FIXED["k"]: "kb", PA.FIXED["t"]: "kf"}
+
+
 def template_markup(tid, pixels, track=True):
     pix = {}
     for k, ch in pixels.items():
@@ -1158,8 +1161,14 @@ def template_markup(tid, pixels, track=True):
             if track:
                 CLS_USED.add(ch)
             pix[k] = "@" + pcode(ch)
-    under = underpaint(pix)
-    return f'<g id="{tid}">' + re.sub(r'stroke="@(\w+)"', r'class="c\1"', under + paths(pix)) + "</g>"
+    # (a step's shades see-through, so never laid one under the other)
+    shades = set(pix.values()) <= SHADES.keys()
+    under = "" if shades else underpaint(pix)
+    out = re.sub(r'stroke="@(\w+)"', r'class="c\1"', under + paths(pix))
+    # a step's shades over the legs (people_art: k, t)
+    for colour, cls in SHADES.items():
+        out = out.replace(f'stroke="{colour}"', f'class="{cls}"').replace(f'style="fill:{colour}"', f'class="{cls}" style="fill:#000;stroke:none"')
+    return f'<g id="{tid}">' + out + "</g>"
 
 
 # Colours every person has, laid under a row of several first; else the row's commonest colour,
@@ -1231,16 +1240,52 @@ def steps_svg(pa, pb):
     return uses(shared) + f'<g class="pa">{uses(own["pa"])}</g><g class="pb">{uses(own["pb"])}</g>'
 
 
+# A person's walk, four steps to a stride: a step (pa), their feet passing (pb), a step on the
+# other foot (pa again, the far leg, the darker, now the one in front: --kb and --kf),
+# passing again. On each step, the legs apart, they sink a pixel (wb, round the whole of them), and
+# rise as the feet pass: the step's legs are drawn a row shorter, so their feet stay on the ground.
+STEPS = ("pa", "pb")
+STEP_OF = {"pa": "a", "pb": "b"}
+
+
+def stride_svg(where):
+    """`where`: [(part, group path)], each part's place: () for drawn in every step, else the
+    classes of the groups it sits in (a step's, then dry or wet)."""
+    def emit():
+        tree = {}
+        for n, path in where:
+            node = tree
+            for cls in path:
+                node = node.setdefault(cls, {})
+            node.setdefault(None, []).append(n)
+
+        def draw(node):
+            text = uses(node.get(None, []))
+            for cls, sub in node.items():
+                if cls is not None:
+                    text += f'<g class="{cls}">{draw(sub)}</g>'
+            return text
+        return draw(tree)
+    return emit()
+
+
+def walk_svg(person):
+    frames = {k: PA.walk_parts(person, STEP_OF[k]) for k in STEPS}
+    shared, own = split(frames)
+    where = [(n, ()) for n in shared] + [(n, (k,)) for k in STEPS for n in own[k]]
+    return stride_svg(where), list(dict.fromkeys(n for v in frames.values() for n in v))
+
+
 def walker_body(i, person, rain):
     """A walker's two steps, and if they go out in the rain the same with an umbrella: what all
     four share drawn once, each step's own in pa/pb, and in there what only dry or only wet shows."""
-    dry = {"pa": PA.walk_parts(person, "a"), "pb": PA.walk_parts(person, "b")}
     if not rain:
-        return steps_svg(dry["pa"], dry["pb"]), dry["pa"] + dry["pb"]
-    wet = {"pa": PA.walk_parts(person, "a", True), "pb": PA.walk_parts(person, "b", True)}
-    every = list(dict.fromkeys(dry["pa"] + dry["pb"] + wet["pa"] + wet["pb"]))
+        return walk_svg(person)
+    dry = {k: PA.walk_parts(person, STEP_OF[k]) for k in STEPS}
+    wet = {k: PA.walk_parts(person, STEP_OF[k], True) for k in STEPS}
+    every = list(dict.fromkeys([n for v in dry.values() for n in v] + [n for v in wet.values() for n in v]))
     shared, out_dry, out_wet = [], [], []
-    step = {k: {"both": [], "dry": [], "wet": []} for k in ("pa", "pb")}
+    step = {k: {"both": [], "dry": [], "wet": []} for k in STEPS}
     for n in every:
         d = {k: n in dry[k] for k in step}
         w = {k: n in wet[k] for k in step}
@@ -1259,20 +1304,19 @@ def walker_body(i, person, rain):
                 elif w[k]:
                     step[k]["wet"].append(n)
 
-    def group(cls, parts):
-        return f'<g class="{cls}">{uses(parts)}</g>' if parts else ""
-
-    out = uses(shared) + group(f"wd{i}", out_dry) + group(f"ww ww{i}", out_wet)
-    for k in ("pa", "pb"):
-        out += (f'<g class="{k}">{uses(step[k]["both"])}' + group(f"wd{i}", step[k]["dry"])
-                + group(f"ww ww{i}", step[k]["wet"]) + "</g>")
-    return out, every
+    dry_g, wet_g = f"wd{i}", f"ww ww{i}"
+    where = ([(n, ()) for n in shared] + [(n, (dry_g,)) for n in out_dry] + [(n, (wet_g,)) for n in out_wet])
+    for k in STEPS:
+        where += ([(n, (k,)) for n in step[k]["both"]] + [(n, (k, dry_g)) for n in step[k]["dry"]]
+                  + [(n, (k, wet_g)) for n in step[k]["wet"]])
+    return stride_svg(where), every
 
 
-def walker_svg(i, direction, y, body, width, style=""):
+def walker_svg(i, direction, y, body, width, style="", bob=True):
     flip = f' transform="translate({width},0) scale(-1,1)"' if direction < 0 else ""
     st = f' style="{style}"' if style else ""
-    return (f'<g class="w w{i}"><g class="wn{i}" transform="translate(0,{y})"><g{flip}{st}>'
+    wb = ' class="wb"' if bob else ""
+    return (f'<g class="w w{i}"><g class="wn{i}" transform="translate(0,{y})"><g{wb}{flip}{st}>'
             f'{body}</g></g></g>')
 
 
@@ -1311,7 +1355,7 @@ for i, (kind, direction, speed, width) in enumerate((("dog", 1, 6.5, 24), ("bike
         steps = (small_paths(same) + f'<g class="pa">{small_paths({k: c for k, c in a.items() if k not in same})}</g>'
                  f'<g class="pb">{small_paths({k: c for k, c in b.items() if k not in same})}</g>'
                  f'<g class="wsc">{small_paths(PA.cyclist_scarf())}</g>')
-        people_svg += walker_svg(i, direction, y, steps, width)
+        people_svg += walker_svg(i, direction, y, steps, width, bob=False)
     walkers.append((i, direction, dur))
 
 
@@ -1340,8 +1384,7 @@ WALK_Y = GROUND + 4 - 21                 # visitors' feet on the path's back edg
 
 
 def visitor_walk(person):
-    pa, pb = PA.walk_parts(person, "a"), PA.walk_parts(person, "b")
-    return steps_svg(pa, pb), pa + pb
+    return walk_svg(person)
 
 
 def styled(body, x, y, extra=""):
@@ -1533,7 +1576,7 @@ for _q in _used:
     _steps, _wparts = visitor_walk(PEOPLE[_q])
     _back = PA.back_parts(PEOPLE[_q])
     # the walk, or (while --bk is 1) their back, turned to a door or the gate
-    WALK_DEFS += f'<g id="wk{_q}" class="pp{_q}"><g class="wks">{_steps}</g><g class="bkp">{uses(_back)}</g></g>'
+    WALK_DEFS += f'<g id="wk{_q}" class="pp{_q}"><g class="wks wb">{_steps}</g><g class="bkp">{uses(_back)}</g></g>'
     _parts[_q] += _wparts + _back
 
 
@@ -1902,8 +1945,11 @@ STYLE = (
     + DAY_STYLE + LATE_STYLE + RAIN_STYLE +
     ".pt{animation-name:fall;animation-timing-function:steps(40,end);animation-iteration-count:infinite}"
     "@keyframes fall{0%{transform:translate(0,0);opacity:0}8%{opacity:1}85%{opacity:1}100%{transform:translate(var(--dx),var(--dy));opacity:0}}"
-    ".pa{animation:pa .5s steps(1,end) infinite}.pb{animation:pa .5s steps(1,end) infinite;animation-delay:-.25s}"
-    "@keyframes pa{0%{opacity:1}50%{opacity:0}}"
+    ".pa{animation:pa .5s steps(1,end) infinite,sw 1s steps(1,end) infinite}.pb{animation:pa .5s steps(1,end) infinite;animation-delay:-.25s}"
+    "@keyframes pa{0%{opacity:1}50%{opacity:0}}@keyframes sw{0%{--kb:.28;--kf:0}50%{--kb:0;--kf:.28}}"
+    # a step's shades: black, as see-through as --kb and --kf say (none where they are not set)
+    ".kb,.kf{stroke:#000}.kb{opacity:var(--kb,0)}.kf{opacity:var(--kf,0)}"
+    ".wb{animation:wb .5s steps(1,end) infinite}@keyframes wb{0%{translate:0 1px}50%{translate:none}}"
     "@keyframes wr{0%{translate:-" + str(WALK_PAD) + "px}100%{translate:" + str(W + 4) + "px}}"
     "@keyframes wl{0%{translate:" + str(W + 4) + "px}100%{translate:-" + str(WALK_PAD) + "px}}"
     ".talk0,.talk1{opacity:0;animation:talk 5s steps(1,end) infinite}.talk0r,.talk1r{animation:talkr 5s steps(1,end) infinite}"
@@ -1915,7 +1961,7 @@ STYLE = (
     ".vlit{animation:vlit 7s steps(7,end) infinite}@keyframes vlit{0%{transform:translateY(0);opacity:0}10%{opacity:1}70%{transform:translateY(12px);opacity:1}71%{opacity:0}}"
     ".vs{opacity:var(--s,0)}.wsc{display:none}.sg1{stroke-dasharray:2 1 1 2}"
     + VISIT_CSS + CAST_CSS + FIREFLY_STYLE +
-    "@media (prefers-reduced-motion: reduce){.pt{animation:none;opacity:0}.tw0,.tw1,.tw2,.beacon,.win,.neon2,.lampglow,.lamp,.fw0,.fw1,.fw2,.rail,.pa,.pb,.w,.vlit,.v,.vw,.vs,.talk0,.talk1,.talk0r,.talk1r,.blink,.tlit,.rfa,.rna,.sp0,.sp1,.sp2,.ff{animation:none}.v,.v .vw,.v .vs,.ta,.tb,.tm,.tf,.dh,.do,.ds{animation:none!important}.v{--s:1}.pb,.vlit,.vw,.fw1,.fw2,.tr,.trb{opacity:0}.tr,.trb{animation:none}.vs{opacity:1}}"
+    "@media (prefers-reduced-motion: reduce){.pt{animation:none;opacity:0}.tw0,.tw1,.tw2,.beacon,.win,.neon2,.lampglow,.lamp,.fw0,.fw1,.fw2,.rail,.pa,.pb,.wb,.w,.vlit,.v,.vw,.vs,.talk0,.talk1,.talk0r,.talk1r,.blink,.tlit,.rfa,.rna,.sp0,.sp1,.sp2,.ff{animation:none}.v,.v .vw,.v .vs,.ta,.tb,.tm,.tf,.dh,.do,.ds{animation:none!important}.v{--s:1}.pb,.vlit,.vw,.fw1,.fw2,.tr,.trb{opacity:0}.tr,.trb{animation:none}.vs{opacity:1}}"
 )
 
 def hours_ts(h):
@@ -1944,7 +1990,7 @@ def short_ids(texts, extra=()):
 
 # Each ambient loop keeps its own offset in --d, and the band adds the wall clock, --t, which
 # register.tsx writes at each redraw: so a redraw carries every loop on from where it was.
-AMBIENT = (".tw0,.tw1,.tw2,.beacon,.win,.neon2,.lampglow,.lamp,.fw0,.fw1,.fw2,.rail,.pt,.pa,.pb,"
+AMBIENT = (".tw0,.tw1,.tw2,.beacon,.win,.neon2,.lampglow,.lamp,.fw0,.fw1,.fw2,.rail,.pt,.pa,.pb,.wb,"
            ".talk0,.talk1,.talk0r,.talk1r,.blink,.tlit,.vlit,.rfa,.rna,.sp0,.sp1,.sp2,.ff,.fp0,.fp1,.fp2,.fp3")
 STYLE = re.sub(r"animation-delay:(-[\d.]+s)", r"--d:\g<1>", STYLE) + AMBIENT + "{animation-delay:calc(var(--d,0s) - var(--t,0s))}"
 defs = re.sub(r"animation-delay:(-[\d.]+s)", r"--d:\g<1>", defs)

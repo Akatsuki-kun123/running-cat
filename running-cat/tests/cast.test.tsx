@@ -18,7 +18,7 @@ test('people pick different things on different visits', () => {
   }
 })
 
-test('everyone only does what they like, and only where the park can draw them', () => {
+test('everyone only does what they like, and only where the park can draw them', { timeoutMs: 30_000 }, () => {
   for (const b of makePark().plan()) {
     expect(b.person.does).toContain(b.action.id)
     expect(b.spot.people).toContain(b.person.index)

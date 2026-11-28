@@ -9,7 +9,8 @@ U umbrella, u its shade, I umbrella shaft, D phone, d screen, F flash, V can.
 """
 
 # letters drawn in a fixed colour, the same for everyone
-FIXED = {"E": "#1a1220", "M": "#c98a70", "G": "#c9f6ff", "I": "#3a4058", "D": "#1a1220", "d": "#9ff0ff",
+# k and t: a step's shade over the leg behind and the one in front (make_park: kb, kf)
+FIXED = {"k": "#000001", "t": "#000002", "E": "#1a1220", "M": "#c98a70", "G": "#c9f6ff", "I": "#3a4058", "D": "#1a1220", "d": "#9ff0ff",
          "F": "#fff6c9", "V": "#ff4040", "e": "#c9f6ff"}
 
 HEADS = {
@@ -47,13 +48,13 @@ TORSOS = {
 }
 COAT_HEM = {"a": ["...JJJJJ...", "..JJJjJJJ.."], "b": ["...JJJJJ...", "...JJjJJ..."], "s": ["...JJJJJ...", "...JJjJJ..."]}
 LEGS = {
-    ("pants", "a"): ["...PPPPP...", "...PPpPP...", "..PP...PP..", "..PP...PP..", "..PP...PP..", "..PP...PP..", ".PP.....PP.", ".BB.....BBB"],
+    ("pants", "a"): ["...PPPPP...", "...PPpPP...", "...PPPP....", "...PP.PP...", "...PP.PP...", "...PP..PP..", "...PP...PP.", "...BBB..BBB"],
     ("pants", "b"): ["...PPPPP...", "....PPP....", "....PPP....", "....PpP....", "....PPP....", "....PPP....", "....PPP....", "....BBBB..."],
     ("pants", "s"): ["...PPPPP...", "...PPpPP...", "...PP.PP...", "...PP.PP...", "...PP.PP...", "...PP.PP...", "...PP.PP...", "...BB.BBB.."],
-    ("skirt", "a"): ["...LLLLL...", "..LlLlLlL..", "...OO.OO...", "..OO...OO..", "..OO...OO..", "..OO...OO..", ".OO.....OO.", ".BB.....BBB"],
+    ("skirt", "a"): ["...LLLLL...", "..LlLlLlL..", "...OOOO....", "...OO.OO...", "...OO.OO...", "...OO..OO..", "...OO...OO.", "...BBB..BBB"],
     ("skirt", "b"): ["...LLLLL...", "..LlLlLlL..", "....OOO....", "....OOO....", "....OOO....", "....OOO....", "....OOO....", "....BBBB..."],
     ("skirt", "s"): ["...LLLLL...", "..LlLlLlL..", "...OO.OO...", "...OO.OO...", "...OO.OO...", "...OO.OO...", "...OO.OO...", "...BB.BBB.."],
-    ("long", "a"):  ["...LLLLL...", "..LlLlLlL..", "..LlLlLlL..", ".LlLlLlLlL.", "..SS...SS..", "..OO...OO..", "..OO...OO..", ".BBB...BBB."],
+    ("long", "a"):  ["...LLLLL...", "..LlLlLlL..", "..LlLlLlL..", ".LlLlLlLlL.", "...SS.SS...", "...OO..OO..", "...OO...OO.", "...BBB..BBB"],
     ("long", "b"):  ["...LLLLL...", "..LlLlLlL..", "..LlLlLlL..", "..LlLlLlL..", "....SSS....", "....OOO....", "....OOO....", "....BBBB..."],
     ("long", "s"):  ["...LLLLL...", "..LlLlLlL..", "..LlLlLlL..", "..LlLlLlL..", "...SS.SS...", "...OO.OO...", "...OO.OO...", "...BB.BBB.."],
 }
@@ -129,7 +130,15 @@ for k, v in FRONT_HEADS.items():
 for k, v in TORSOS.items():
     TEMPLATES[f"body_{k}"] = _body(v)
 for (kind, step), v in LEGS.items():
-    TEMPLATES[f"legs_{kind}_{step}"] = grid(v, 14)
+    # a step's legs a row shorter, from under the hip: the walk sinks them a pixel (make_park: wb)
+    TEMPLATES[f"legs_{kind}_{step}"] = grid(v[1:], 14) if step == "a" else grid(v, 14)
+# A step's far leg a shade darker: a shade over each leg, the one behind (k) and the one in front
+# (t), only one of them dark at a time; the walk swaps them each step (make_park: --kb, --kf), so
+# the legs change places. Over the bare legs only, not the hip or the skirt, nor the shoes.
+STRIDE_ROWS = {"pants": 16, "skirt": 16, "long": 18}
+for kind, top in STRIDE_ROWS.items():
+    TEMPLATES[f"shade_{kind}"] = {(x, y): ("k" if x < 5 else "t")
+                                  for (x, y), ch in TEMPLATES[f"legs_{kind}_a"].items() if top - 1 <= y <= 19 and ch != "B"}
 for step, v in COAT_HEM.items():
     TEMPLATES[f"hem_{step}"] = grid(v, 14)
 for k, v in ARMS.items():
@@ -198,10 +207,12 @@ TEMPLATES["farm_hold"] = {(2, 7): "a", (2, 8): "a", (2, 9): "a", (3, 10): "S", (
 TEMPLATES["farm_drink"] = {(2, 7): "a", (3, 7): "a", (4, 6): "S", (4, 4): "V", (4, 5): "V", (5, 5): "V"}
 TEMPLATES["fphone"] = {(3, 11): "a", (4, 11): "S", (6, 11): "S", (7, 11): "a", (5, 11): "D", (5, 10): "d"}
 TEMPLATES["fscreen"] = {(5, 10): "F"}
-# a white dog on a lead, two steps
+# a white dog on a lead, two steps; on the walker's step, as they sink a pixel, drawn a row higher
+# so it stays on the ground
 for step, rows in (("a", DOG), ("b", DOG_B)):
-    f = {k: DOG_COL[ch] for k, ch in grid(rows, 15, 12).items()}
-    line(f, (11, 12), (20, 17), "#ff4fa3")
+    up = 1 if step == "a" else 0
+    f = {k: DOG_COL[ch] for k, ch in grid(rows, 15 - up, 12).items()}
+    line(f, (11, 12), (20, 17 - up), "#ff4fa3")
     TEMPLATES[f"dog_{step}"] = f
 
 
@@ -429,7 +440,7 @@ TALKERS = [
 
 # ---------- parts: the templates a pose is made of, in drawing order ----------
 def _base(p, step):
-    out = [f"body_{p['torso']}", f"legs_{p['legs']}_{step}"]
+    out = [f"body_{p['torso']}", f"legs_{p['legs']}_{step}"] + ([f"shade_{p['legs']}"] if step == "a" else [])
     if p["torso"] == "coat":
         out.append(f"hem_{step}")
     out.append(f"head_{p['head']}")
@@ -559,15 +570,21 @@ def cyclist_pixels(step):
 
 
 # ---------- emitting ----------
+
+
+def full_pal(pal):
+    pal = dict(pal)
+    pal.setdefault("j", pal.get("J"))
+    pal.setdefault("a", pal.get("j"))
+    return pal
+
+
 def colour_of(ch, pal):
     if ch.startswith("#"):
         return ch
     if ch in FIXED:
         return FIXED[ch]
-    pal = dict(pal)
-    pal.setdefault("j", pal.get("J"))
-    pal.setdefault("a", pal.get("j"))
-    return pal[ch]
+    return full_pal(pal)[ch]
 
 
 def flatten(parts, pal):
@@ -575,15 +592,15 @@ def flatten(parts, pal):
     out = {}
     for name in parts:
         for k, ch in TEMPLATES[name].items():
+            if ch in "kt":                          # (a shade, not a colour of its own)
+                continue
             out[k] = colour_of(ch, pal)
     return out
 
 
 def var_style(p, parts):
     """The colour variables a person's parts use."""
-    pal = dict(p["pal"])
-    pal.setdefault("j", pal.get("J"))
-    pal.setdefault("a", pal.get("j"))
+    pal = full_pal(p["pal"])
     used = {ch for name in parts for ch in TEMPLATES[name].values()
             if not ch.startswith("#") and ch not in FIXED}
     if "a" in used and "a" not in p["pal"]:        # sleeves in the jacket's shade: the style's fallback
